@@ -14,6 +14,8 @@ import {
   aerodromeGaugeAbi,
 } from "../abis/aerodrome.js";
 import { aaveV3PoolDataProviderAbi } from "../abis/aaveV3.js";
+import { uniswapV3FactoryAbi, uniswapV3PoolAbi } from "../abis/uniswapV3.js";
+import { priceService } from "../price-service.js";
 
 const BASE_TOKENS = TOKENS[8453];
 const BASE_PROTOCOLS = PROTOCOLS[8453];
@@ -23,6 +25,13 @@ const AERODROME_POOLS = [
   { address: "0xcDAC0d6c6C59727a65F871236188350531885C43" as const, name: "WETH/USDC" },
   { address: "0xB4885Bc63399BF5518b994c1d0C153334Ee579D0" as const, name: "WETH/USDbC" },
   { address: "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d" as const, name: "AERO/USDC" },
+];
+
+/** Uniswap V3 pools to track on Base (token pairs + fee tier) */
+const UNISWAP_V3_POOLS = [
+  { tokenA: BASE_TOKENS.WETH, tokenB: BASE_TOKENS.USDC, fee: 500, name: "WETH/USDC" },
+  { tokenA: BASE_TOKENS.WETH, tokenB: BASE_TOKENS.USDC, fee: 3000, name: "WETH/USDC" },
+  { tokenA: BASE_TOKENS.WETH, tokenB: BASE_TOKENS.DAI, fee: 3000, name: "WETH/DAI" },
 ];
 
 /** Aave V3 tokens to track on Base */
@@ -50,8 +59,9 @@ export class BaseAdapter implements ChainAdapter {
   async getPoolData(): Promise<Pool[]> {
     const pools: Pool[] = [];
 
-    const [aeroPools, aavePools] = await Promise.allSettled([
+    const [aeroPools, uniV3Pools, aavePools] = await Promise.allSettled([
       this.fetchAerodromePools(),
+      this.fetchUniswapV3Pools(),
       this.fetchAavePools(),
     ]);
 
@@ -59,6 +69,12 @@ export class BaseAdapter implements ChainAdapter {
       pools.push(...aeroPools.value);
     } else {
       console.error("[BaseAdapter] Failed to fetch Aerodrome pools:", aeroPools.reason);
+    }
+
+    if (uniV3Pools.status === "fulfilled") {
+      pools.push(...uniV3Pools.value);
+    } else {
+      console.error("[BaseAdapter] Failed to fetch Uniswap V3 pools:", uniV3Pools.reason);
     }
 
     if (aavePools.status === "fulfilled") {
@@ -76,10 +92,17 @@ export class BaseAdapter implements ChainAdapter {
     return [];
   }
 
-  async getTokenPrice(_tokenAddress: string): Promise<number> {
-    // TODO: Integrate Chainlink price feeds or CoinGecko API
-    // For now, return hardcoded prices for known tokens
-    return 0;
+  async getTokenPrice(tokenAddress: string): Promise<number> {
+    try {
+      const symbol = await this.client.readContract({
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: "symbol",
+      });
+      return priceService.getPrice(symbol);
+    } catch {
+      return 0;
+    }
   }
 
   // ─── Private: Aerodrome ───────────────────────────────────────
@@ -131,14 +154,11 @@ export class BaseAdapter implements ChainAdapter {
       this.fetchTokenInfo(token1Addr),
     ]);
 
-    // Estimate TVL from reserves (simplified — real implementation uses price feeds)
     const reserve0 = Number(formatUnits(reserves[0], token0Info.decimals));
     const reserve1 = Number(formatUnits(reserves[1], token1Info.decimals));
 
-    // For now, assume stablecoin pairs have $1 per token, ETH ~ $3000
-    // TODO: Replace with real price feeds
-    const price0 = this.estimateTokenPrice(token0Info.symbol);
-    const price1 = this.estimateTokenPrice(token1Info.symbol);
+    const price0 = await priceService.getPrice(token0Info.symbol);
+    const price1 = await priceService.getPrice(token1Info.symbol);
     const tvl = reserve0 * price0 + reserve1 * price1;
 
     // Fetch AERO reward rate from gauge
@@ -157,7 +177,7 @@ export class BaseAdapter implements ChainAdapter {
           abi: aerodromeGaugeAbi,
           functionName: "rewardRate",
         });
-        const aeroPrice = this.estimateTokenPrice("AERO");
+        const aeroPrice = await priceService.getPrice("AERO");
         rewardApy = calculateRewardApy(
           Number(formatUnits(rewardRate, 18)),
           aeroPrice,
@@ -195,6 +215,123 @@ export class BaseAdapter implements ChainAdapter {
     };
   }
 
+  // ─── Private: Uniswap V3 ─────────────────────────────────────
+
+  private async fetchUniswapV3Pools(): Promise<Pool[]> {
+    const pools: Pool[] = [];
+
+    for (const poolDef of UNISWAP_V3_POOLS) {
+      try {
+        const poolAddress = await this.client.readContract({
+          address: BASE_PROTOCOLS.uniswapV3.factory as `0x${string}`,
+          abi: uniswapV3FactoryAbi,
+          functionName: "getPool",
+          args: [
+            poolDef.tokenA as `0x${string}`,
+            poolDef.tokenB as `0x${string}`,
+            poolDef.fee,
+          ],
+        });
+
+        if (poolAddress === "0x0000000000000000000000000000000000000000") continue;
+
+        const pool = await this.fetchSingleUniV3Pool(
+          poolAddress,
+          poolDef.name,
+          poolDef.fee
+        );
+        if (pool) pools.push(pool);
+      } catch (err) {
+        console.error(
+          `[BaseAdapter] Error fetching Uni V3 pool ${poolDef.name} (${poolDef.fee}):`,
+          err
+        );
+      }
+    }
+
+    return pools;
+  }
+
+  private async fetchSingleUniV3Pool(
+    poolAddress: `0x${string}`,
+    name: string,
+    feeTier: number
+  ): Promise<Pool | null> {
+    const [token0Addr, token1Addr, liquidity] = await Promise.all([
+      this.client.readContract({
+        address: poolAddress,
+        abi: uniswapV3PoolAbi,
+        functionName: "token0",
+      }),
+      this.client.readContract({
+        address: poolAddress,
+        abi: uniswapV3PoolAbi,
+        functionName: "token1",
+      }),
+      this.client.readContract({
+        address: poolAddress,
+        abi: uniswapV3PoolAbi,
+        functionName: "liquidity",
+      }),
+    ]);
+
+    if (liquidity === 0n) return null;
+
+    const [token0Info, token1Info] = await Promise.all([
+      this.fetchTokenInfo(token0Addr),
+      this.fetchTokenInfo(token1Addr),
+    ]);
+
+    // Estimate TVL from pool balances
+    const [balance0, balance1] = await Promise.all([
+      this.client.readContract({
+        address: token0Addr,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [poolAddress],
+      }),
+      this.client.readContract({
+        address: token1Addr,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [poolAddress],
+      }),
+    ]);
+
+    const amount0 = Number(formatUnits(balance0, token0Info.decimals));
+    const amount1 = Number(formatUnits(balance1, token1Info.decimals));
+    const price0 = await priceService.getPrice(token0Info.symbol);
+    const price1 = await priceService.getPrice(token1Info.symbol);
+    const tvl = amount0 * price0 + amount1 * price1;
+
+    // Fee tier expressed in hundredths of a bip (500 = 0.05%, 3000 = 0.30%)
+    const feeBps = feeTier / 100;
+    const estimatedVolume24h = tvl * 0.015;
+    const baseApy = calculateBaseApy(estimatedVolume24h, feeBps, tvl);
+
+    const feeLabel = feeTier === 500 ? "0.05%" : feeTier === 3000 ? "0.30%" : `${feeTier / 10000}%`;
+
+    return {
+      id: generatePoolId(8453, "uniswap-v3", poolAddress),
+      chain: 8453,
+      protocol: "uniswap-v3",
+      type: "dex",
+      name: `${name} (${feeLabel})`,
+      tokens: [token0Info, token1Info],
+      apy: {
+        base: baseApy,
+        reward: 0,
+        total: baseApy,
+      },
+      tvl,
+      riskScore: 3,
+      contractAddress: poolAddress,
+      feeTier,
+      url: `https://app.uniswap.org/pools?chain=base`,
+      updatedAt: Date.now(),
+    };
+  }
+
   // ─── Private: Aave V3 ────────────────────────────────────────
 
   private async fetchAavePools(): Promise<Pool[]> {
@@ -212,7 +349,7 @@ export class BaseAdapter implements ChainAdapter {
         const liquidityRate = reserveData[5]; // liquidityRate in RAY
         const totalAToken = reserveData[2];
         const tokenInfo = await this.fetchTokenInfo(token.address as `0x${string}`);
-        const tokenPrice = this.estimateTokenPrice(token.symbol);
+        const tokenPrice = await priceService.getPrice(token.symbol);
         const tvl =
           Number(formatUnits(totalAToken, tokenInfo.decimals)) * tokenPrice;
 
@@ -255,28 +392,10 @@ export class BaseAdapter implements ChainAdapter {
     return {
       address,
       symbol,
-      name: symbol, // Simplified — would use a token list in production
+      name: symbol,
       decimals,
       chainId: 8453,
-      priceUsd: this.estimateTokenPrice(symbol),
+      priceUsd: await priceService.getPrice(symbol),
     };
-  }
-
-  /**
-   * Placeholder price estimation. Will be replaced with Chainlink/CoinGecko feeds.
-   */
-  private estimateTokenPrice(symbol: string): number {
-    const prices: Record<string, number> = {
-      WETH: 3000,
-      ETH: 3000,
-      USDC: 1,
-      "USDC.e": 1,
-      USDbC: 1,
-      DAI: 1,
-      AERO: 1.5,
-      ARB: 1.2,
-      GRAIL: 200,
-    };
-    return prices[symbol] ?? 0;
   }
 }

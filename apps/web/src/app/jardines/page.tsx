@@ -2,6 +2,7 @@
 
 import { StatsBar } from "@/components/stats-bar";
 import { ChainSelector } from "@/components/chain-selector";
+import { ProtocolFilter } from "@/components/protocol-filter";
 import { SearchBar } from "@/components/search-bar";
 import { SortControls } from "@/components/sort-controls";
 import { PoolList } from "@/components/pool-list";
@@ -23,6 +24,8 @@ export default function JardinesPage() {
           <ChainSelector />
           <SearchBar />
         </div>
+
+        <ProtocolFilter />
 
         <div className="flex items-center justify-between">
           <SortControls />

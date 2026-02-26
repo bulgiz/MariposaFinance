@@ -1,7 +1,8 @@
 import type { ChainAdapter, Pool, GlobalStats } from "@mariposa/core";
-import { filterAndSortPools, type PoolFilters } from "@mariposa/core";
+import { filterAndSortPools, type PoolFilters, POOL_CACHE_TTL } from "@mariposa/core";
 import { BaseAdapter } from "@mariposa/chain-adapters";
 import { ArbitrumAdapter } from "@mariposa/chain-adapters";
+import { cacheGet, cacheSet } from "./cache.js";
 
 /**
  * PoolService aggregates data from all chain adapters and provides
@@ -74,6 +75,15 @@ export class PoolService {
   }
 
   private async refresh(): Promise<void> {
+    // Try Redis cache first (for fast restart / multi-instance)
+    const cached = await cacheGet<Pool[]>("pools:all");
+    if (cached && cached.length > 0) {
+      this.cachedPools = cached;
+      this.lastRefresh = Date.now();
+      console.log(`[PoolService] Restored ${cached.length} pools from Redis cache`);
+      return;
+    }
+
     console.log("[PoolService] Refreshing pool data from all chains...");
     const results = await Promise.allSettled(
       this.adapters.map((adapter) => adapter.getPoolData())
@@ -90,6 +100,10 @@ export class PoolService {
 
     this.cachedPools = pools;
     this.lastRefresh = Date.now();
+
+    // Persist to Redis for other instances / fast restarts
+    await cacheSet("pools:all", pools, POOL_CACHE_TTL);
+
     console.log(`[PoolService] Cached ${pools.length} pools from ${this.adapters.length} chains`);
   }
 }
