@@ -86,10 +86,28 @@ export class BaseAdapter implements ChainAdapter {
     return pools;
   }
 
-  async getUserPositions(_address: string): Promise<Position[]> {
-    // Phase 1: Read-only — return empty for now.
-    // Phase 2 will read on-chain balances and gauge positions.
-    return [];
+  async getUserPositions(address: string): Promise<Position[]> {
+    const positions: Position[] = [];
+    const userAddr = address as `0x${string}`;
+
+    const [aavePositions, aeroPositions] = await Promise.allSettled([
+      this.fetchAaveUserPositions(userAddr),
+      this.fetchAerodromeUserPositions(userAddr),
+    ]);
+
+    if (aavePositions.status === "fulfilled") {
+      positions.push(...aavePositions.value);
+    } else {
+      console.error("[BaseAdapter] Failed to fetch Aave positions:", aavePositions.reason);
+    }
+
+    if (aeroPositions.status === "fulfilled") {
+      positions.push(...aeroPositions.value);
+    } else {
+      console.error("[BaseAdapter] Failed to fetch Aerodrome positions:", aeroPositions.reason);
+    }
+
+    return positions;
   }
 
   async getTokenPrice(tokenAddress: string): Promise<number> {
@@ -379,6 +397,170 @@ export class BaseAdapter implements ChainAdapter {
     }
 
     return pools;
+  }
+
+  // ─── Private: User Positions ──────────────────────────────────
+
+  private async fetchAaveUserPositions(user: `0x${string}`): Promise<Position[]> {
+    const positions: Position[] = [];
+
+    for (const token of AAVE_BASE_TOKENS) {
+      try {
+        const userData = await this.client.readContract({
+          address: BASE_PROTOCOLS.aaveV3.poolDataProvider as `0x${string}`,
+          abi: aaveV3PoolDataProviderAbi,
+          functionName: "getUserReserveData",
+          args: [token.address as `0x${string}`, user],
+        });
+
+        const aTokenBalance = userData[0]; // currentATokenBalance
+        if (aTokenBalance === 0n) continue;
+
+        const tokenInfo = await this.fetchTokenInfo(token.address as `0x${string}`);
+        const tokenPrice = await priceService.getPrice(token.symbol);
+        const amount = Number(formatUnits(aTokenBalance, tokenInfo.decimals));
+        const valueUsd = amount * tokenPrice;
+
+        // Look up the matching pool to attach to the position
+        const reserveData = await this.client.readContract({
+          address: BASE_PROTOCOLS.aaveV3.poolDataProvider as `0x${string}`,
+          abi: aaveV3PoolDataProviderAbi,
+          functionName: "getReserveData",
+          args: [token.address as `0x${string}`],
+        });
+
+        const supplyApy = calculateLendingApy(reserveData[5]);
+
+        const pool: Pool = {
+          id: generatePoolId(8453, "aave-v3", token.address),
+          chain: 8453,
+          protocol: "aave-v3",
+          type: "lending",
+          name: `${token.symbol} Supply`,
+          tokens: [tokenInfo],
+          apy: { base: supplyApy, reward: 0, total: supplyApy },
+          tvl: Number(formatUnits(reserveData[2], tokenInfo.decimals)) * tokenPrice,
+          riskScore: 2,
+          contractAddress: BASE_PROTOCOLS.aaveV3.pool,
+          url: `https://app.aave.com/reserve-overview/?underlyingAsset=${token.address}&marketName=proto_base_v3`,
+          updatedAt: Date.now(),
+        };
+
+        positions.push({
+          pool,
+          deposited: valueUsd,
+          earned: 0, // Aave earnings are embedded in the aToken balance growth
+          tokens: [{ symbol: token.symbol, amount, valueUsd }],
+        });
+      } catch (err) {
+        console.error(`[BaseAdapter] Error fetching Aave position for ${token.symbol}:`, err);
+      }
+    }
+
+    return positions;
+  }
+
+  private async fetchAerodromeUserPositions(user: `0x${string}`): Promise<Position[]> {
+    const positions: Position[] = [];
+
+    for (const poolInfo of AERODROME_POOLS) {
+      try {
+        // Find the gauge for this pool
+        const gaugeAddr = await this.client.readContract({
+          address: BASE_PROTOCOLS.aerodrome.voter as `0x${string}`,
+          abi: aerodromeVoterAbi,
+          functionName: "gauges",
+          args: [poolInfo.address],
+        });
+
+        if (gaugeAddr === "0x0000000000000000000000000000000000000000") continue;
+
+        // Check user's staked balance in the gauge
+        const [stakedBalance, earnedRewards] = await Promise.all([
+          this.client.readContract({
+            address: gaugeAddr,
+            abi: aerodromeGaugeAbi,
+            functionName: "balanceOf",
+            args: [user],
+          }),
+          this.client.readContract({
+            address: gaugeAddr,
+            abi: aerodromeGaugeAbi,
+            functionName: "earned",
+            args: [user],
+          }),
+        ]);
+
+        // Also check direct LP token balance (unstaked)
+        const lpBalance = await this.client.readContract({
+          address: poolInfo.address,
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [user],
+        });
+
+        const totalLpBalance = stakedBalance + lpBalance;
+        if (totalLpBalance === 0n) continue;
+
+        // Get pool data to calculate value
+        const [totalSupply, reserves] = await Promise.all([
+          this.client.readContract({
+            address: poolInfo.address,
+            abi: erc20Abi,
+            functionName: "totalSupply",
+          }),
+          this.client.readContract({
+            address: poolInfo.address,
+            abi: aerodromePoolAbi,
+            functionName: "getReserves",
+          }),
+        ]);
+
+        const [token0Addr, token1Addr] = await Promise.all([
+          this.client.readContract({ address: poolInfo.address, abi: aerodromePoolAbi, functionName: "token0" }),
+          this.client.readContract({ address: poolInfo.address, abi: aerodromePoolAbi, functionName: "token1" }),
+        ]);
+
+        const [token0Info, token1Info] = await Promise.all([
+          this.fetchTokenInfo(token0Addr),
+          this.fetchTokenInfo(token1Addr),
+        ]);
+
+        const reserve0 = Number(formatUnits(reserves[0], token0Info.decimals));
+        const reserve1 = Number(formatUnits(reserves[1], token1Info.decimals));
+        const price0 = await priceService.getPrice(token0Info.symbol);
+        const price1 = await priceService.getPrice(token1Info.symbol);
+
+        const userShare = totalSupply > 0n
+          ? Number(totalLpBalance) / Number(totalSupply)
+          : 0;
+
+        const userAmount0 = reserve0 * userShare;
+        const userAmount1 = reserve1 * userShare;
+        const depositedUsd = userAmount0 * price0 + userAmount1 * price1;
+
+        const aeroPrice = await priceService.getPrice("AERO");
+        const earnedUsd = Number(formatUnits(earnedRewards, 18)) * aeroPrice;
+
+        // Build a matching pool object
+        const pool = await this.fetchSingleAerodromePool(poolInfo.address, poolInfo.name);
+        if (!pool) continue;
+
+        positions.push({
+          pool,
+          deposited: depositedUsd,
+          earned: earnedUsd,
+          tokens: [
+            { symbol: token0Info.symbol, amount: userAmount0, valueUsd: userAmount0 * price0 },
+            { symbol: token1Info.symbol, amount: userAmount1, valueUsd: userAmount1 * price1 },
+          ],
+        });
+      } catch (err) {
+        console.error(`[BaseAdapter] Error fetching Aerodrome position for ${poolInfo.name}:`, err);
+      }
+    }
+
+    return positions;
   }
 
   // ─── Private: Helpers ─────────────────────────────────────────

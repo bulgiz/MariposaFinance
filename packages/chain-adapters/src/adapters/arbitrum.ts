@@ -82,8 +82,28 @@ export class ArbitrumAdapter implements ChainAdapter {
     return pools;
   }
 
-  async getUserPositions(_address: string): Promise<Position[]> {
-    return [];
+  async getUserPositions(address: string): Promise<Position[]> {
+    const positions: Position[] = [];
+    const userAddr = address as `0x${string}`;
+
+    const [aavePositions, camelotPositions] = await Promise.allSettled([
+      this.fetchAaveUserPositions(userAddr),
+      this.fetchCamelotUserPositions(userAddr),
+    ]);
+
+    if (aavePositions.status === "fulfilled") {
+      positions.push(...aavePositions.value);
+    } else {
+      console.error("[ArbitrumAdapter] Failed to fetch Aave positions:", aavePositions.reason);
+    }
+
+    if (camelotPositions.status === "fulfilled") {
+      positions.push(...camelotPositions.value);
+    } else {
+      console.error("[ArbitrumAdapter] Failed to fetch Camelot positions:", camelotPositions.reason);
+    }
+
+    return positions;
   }
 
   async getTokenPrice(tokenAddress: string): Promise<number> {
@@ -340,6 +360,136 @@ export class ArbitrumAdapter implements ChainAdapter {
     }
 
     return pools;
+  }
+
+  // ─── Private: User Positions ──────────────────────────────────
+
+  private async fetchAaveUserPositions(user: `0x${string}`): Promise<Position[]> {
+    const positions: Position[] = [];
+
+    for (const token of AAVE_ARB_TOKENS) {
+      try {
+        const userData = await this.client.readContract({
+          address: ARB_PROTOCOLS.aaveV3.poolDataProvider as `0x${string}`,
+          abi: aaveV3PoolDataProviderAbi,
+          functionName: "getUserReserveData",
+          args: [token.address as `0x${string}`, user],
+        });
+
+        const aTokenBalance = userData[0];
+        if (aTokenBalance === 0n) continue;
+
+        const tokenInfo = await this.fetchTokenInfo(token.address as `0x${string}`);
+        const tokenPrice = await priceService.getPrice(token.symbol);
+        const amount = Number(formatUnits(aTokenBalance, tokenInfo.decimals));
+        const valueUsd = amount * tokenPrice;
+
+        const reserveData = await this.client.readContract({
+          address: ARB_PROTOCOLS.aaveV3.poolDataProvider as `0x${string}`,
+          abi: aaveV3PoolDataProviderAbi,
+          functionName: "getReserveData",
+          args: [token.address as `0x${string}`],
+        });
+
+        const supplyApy = calculateLendingApy(reserveData[5]);
+
+        const pool: Pool = {
+          id: generatePoolId(42161, "aave-v3", token.address),
+          chain: 42161,
+          protocol: "aave-v3",
+          type: "lending",
+          name: `${token.symbol} Supply`,
+          tokens: [tokenInfo],
+          apy: { base: supplyApy, reward: 0, total: supplyApy },
+          tvl: Number(formatUnits(reserveData[2], tokenInfo.decimals)) * tokenPrice,
+          riskScore: 2,
+          contractAddress: ARB_PROTOCOLS.aaveV3.pool,
+          url: `https://app.aave.com/reserve-overview/?underlyingAsset=${token.address}&marketName=proto_arbitrum_v3`,
+          updatedAt: Date.now(),
+        };
+
+        positions.push({
+          pool,
+          deposited: valueUsd,
+          earned: 0,
+          tokens: [{ symbol: token.symbol, amount, valueUsd }],
+        });
+      } catch (err) {
+        console.error(`[ArbitrumAdapter] Error fetching Aave position for ${token.symbol}:`, err);
+      }
+    }
+
+    return positions;
+  }
+
+  private async fetchCamelotUserPositions(user: `0x${string}`): Promise<Position[]> {
+    const positions: Position[] = [];
+
+    for (const poolInfo of CAMELOT_POOLS) {
+      try {
+        const lpBalance = await this.client.readContract({
+          address: poolInfo.address,
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [user],
+        });
+
+        if (lpBalance === 0n) continue;
+
+        const [totalSupply, reserves] = await Promise.all([
+          this.client.readContract({
+            address: poolInfo.address,
+            abi: camelotPairAbi,
+            functionName: "totalSupply",
+          }),
+          this.client.readContract({
+            address: poolInfo.address,
+            abi: camelotPairAbi,
+            functionName: "getReserves",
+          }),
+        ]);
+
+        const [token0Addr, token1Addr] = await Promise.all([
+          this.client.readContract({ address: poolInfo.address, abi: camelotPairAbi, functionName: "token0" }),
+          this.client.readContract({ address: poolInfo.address, abi: camelotPairAbi, functionName: "token1" }),
+        ]);
+
+        const [token0Info, token1Info] = await Promise.all([
+          this.fetchTokenInfo(token0Addr),
+          this.fetchTokenInfo(token1Addr),
+        ]);
+
+        const reserve0 = Number(formatUnits(reserves[0], token0Info.decimals));
+        const reserve1 = Number(formatUnits(reserves[1], token1Info.decimals));
+        const price0 = await priceService.getPrice(token0Info.symbol);
+        const price1 = await priceService.getPrice(token1Info.symbol);
+
+        const userShare = totalSupply > 0n
+          ? Number(lpBalance) / Number(totalSupply)
+          : 0;
+
+        const userAmount0 = reserve0 * userShare;
+        const userAmount1 = reserve1 * userShare;
+        const depositedUsd = userAmount0 * price0 + userAmount1 * price1;
+
+        const pool = await this.fetchSingleCamelotPool(poolInfo.address, poolInfo.name);
+        if (!pool) continue;
+
+        positions.push({
+          pool,
+          deposited: depositedUsd,
+          earned: 0,
+          tokens: [
+            { symbol: token0Info.symbol, amount: userAmount0, valueUsd: userAmount0 * price0 },
+            { symbol: token1Info.symbol, amount: userAmount1, valueUsd: userAmount1 * price1 },
+          ],
+        });
+      } catch (err) {
+        console.error(`[ArbitrumAdapter] Error fetching Camelot position for ${poolInfo.name}:`, err);
+      }
+    }
+
+    return positions;
   }
 
   // ─── Private: Helpers ─────────────────────────────────────────

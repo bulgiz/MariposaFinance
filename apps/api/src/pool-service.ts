@@ -1,4 +1,4 @@
-import type { ChainAdapter, Pool, GlobalStats } from "@mariposa/core";
+import type { ChainAdapter, Pool, GlobalStats, Portfolio, Position } from "@mariposa/core";
 import { filterAndSortPools, type PoolFilters, POOL_CACHE_TTL } from "@mariposa/core";
 import { BaseAdapter } from "@mariposa/chain-adapters";
 import { ArbitrumAdapter } from "@mariposa/chain-adapters";
@@ -49,6 +49,28 @@ export class PoolService {
       chainsSupported: new Set(pools.map((p) => p.chain)).size,
       lastUpdated: this.lastRefresh,
     };
+  }
+
+  async getPortfolio(address: string): Promise<Portfolio> {
+    console.log(`[PoolService] Fetching portfolio for ${address}...`);
+    const results = await Promise.allSettled(
+      this.adapters.map((adapter) => adapter.getUserPositions(address))
+    );
+
+    const positions: Position[] = [];
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        positions.push(...result.value);
+      } else {
+        console.error("[PoolService] Position fetch failed:", result.reason);
+      }
+    }
+
+    const totalValue = positions.reduce((sum, p) => sum + p.deposited, 0);
+    const totalEarned = positions.reduce((sum, p) => sum + p.earned, 0);
+
+    console.log(`[PoolService] Found ${positions.length} positions for ${address}`);
+    return { address, positions, totalValue, totalEarned };
   }
 
   /**

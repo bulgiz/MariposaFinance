@@ -78,15 +78,8 @@ export function registerPoolRoutes(
         return reply.status(400).send({ error: "Invalid Ethereum address" });
       }
 
-      // Phase 1: Return empty portfolio — positions require on-chain reads
-      return reply.send({
-        data: {
-          address,
-          positions: [],
-          totalValue: 0,
-          totalEarned: 0,
-        },
-      });
+      const portfolio = await poolService.getPortfolio(address);
+      return reply.send({ data: portfolio });
     }
   );
 }

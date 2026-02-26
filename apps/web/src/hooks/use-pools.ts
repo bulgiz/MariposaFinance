@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { fetchPools, fetchPool, fetchStats } from "@/lib/api";
+import { fetchPools, fetchPool, fetchStats, fetchPortfolio } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 
 export function usePools() {
@@ -44,6 +44,16 @@ export function useGlobalStats() {
     queryKey: ["stats"],
     queryFn: () => fetchStats(),
     staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+}
+
+export function usePortfolio(address: string | undefined) {
+  return useQuery({
+    queryKey: ["portfolio", address],
+    queryFn: () => fetchPortfolio(address!),
+    enabled: !!address,
+    staleTime: 30_000,
     refetchInterval: 60_000,
   });
 }
