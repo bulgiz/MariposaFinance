@@ -1,15 +1,24 @@
 "use client";
 
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { usePool } from "@/hooks/use-pools";
+import { useAccount } from "wagmi";
+import { usePool, usePortfolio } from "@/hooks/use-pools";
 import { formatApy, formatUsd, getChainName } from "@mariposa/core";
-import { Badge, Skeleton } from "@mariposa/ui";
+import { Badge, Button, Skeleton } from "@mariposa/ui";
+import { DepositModal } from "@/components/deposit-modal";
+import { WithdrawModal } from "@/components/withdraw-modal";
 
 export default function PoolDetailPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
   const { data, isLoading, error } = usePool(id);
+  const { address } = useAccount();
+  const { data: portfolioData } = usePortfolio(address);
+
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -32,6 +41,17 @@ export default function PoolDetailPage() {
   }
 
   const pool = data.data;
+
+  // Find user's position in this pool
+  const userPosition = portfolioData?.data.positions.find(
+    (p) => p.pool.id === pool.id
+  );
+
+  // Check if deposits are supported (skip Uniswap V3 concentrated liquidity)
+  const depositsSupported =
+    pool.protocol === "aave-v3" ||
+    pool.protocol === "aerodrome" ||
+    pool.protocol === "camelot";
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
@@ -84,6 +104,38 @@ export default function PoolDetailPage() {
           </div>
         </div>
 
+        {/* User Position (if any) */}
+        {userPosition && (
+          <div className="border-t border-border pt-6 mb-6">
+            <h2 className="text-lg font-semibold mb-3">Your Position</h2>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="rounded-lg bg-primary/10 border border-primary/20 p-4">
+                <div className="text-lg font-semibold">
+                  {formatUsd(userPosition.deposited)}
+                </div>
+                <div className="text-xs text-muted-foreground">Deposited</div>
+              </div>
+              <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-4">
+                <div className="text-lg font-semibold text-green-400">
+                  +{formatUsd(userPosition.earned)}
+                </div>
+                <div className="text-xs text-muted-foreground">Earned</div>
+              </div>
+              <div className="rounded-lg bg-secondary p-4">
+                <div className="text-lg font-semibold">
+                  {formatUsd(
+                    userPosition.deposited *
+                      (Math.pow(1 + pool.apy.total / 100, 1 / 365) - 1)
+                  )}
+                  /day
+                </div>
+                <div className="text-xs text-muted-foreground">Est. Earnings</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tokens */}
         <div className="border-t border-border pt-6">
           <h2 className="text-lg font-semibold mb-3">Tokens</h2>
           <div className="flex gap-3">
@@ -101,19 +153,51 @@ export default function PoolDetailPage() {
           </div>
         </div>
 
-        {pool.url && (
-          <div className="border-t border-border pt-6 mt-6">
+        {/* Action Buttons */}
+        <div className="border-t border-border pt-6 mt-6 flex flex-wrap gap-3">
+          {depositsSupported && (
+            <>
+              <Button onClick={() => setDepositOpen(true)} size="lg">
+                {pool.type === "lending" ? "Supply" : "Deposit"}
+              </Button>
+
+              {userPosition && (
+                <Button
+                  onClick={() => setWithdrawOpen(true)}
+                  variant="outline"
+                  size="lg"
+                >
+                  {pool.type === "lending" ? "Withdraw" : "Remove Liquidity"}
+                </Button>
+              )}
+            </>
+          )}
+
+          {pool.url && (
             <a
               href={pool.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="inline-flex h-11 items-center justify-center rounded-lg border border-input bg-transparent px-8 text-sm font-semibold hover:bg-secondary hover:text-secondary-foreground transition-colors"
             >
               View on {pool.protocol.replace("-", " ")} &rarr;
             </a>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+
+      {/* Modals */}
+      <DepositModal
+        pool={pool}
+        isOpen={depositOpen}
+        onClose={() => setDepositOpen(false)}
+      />
+      <WithdrawModal
+        pool={pool}
+        position={userPosition}
+        isOpen={withdrawOpen}
+        onClose={() => setWithdrawOpen(false)}
+      />
     </div>
   );
 }

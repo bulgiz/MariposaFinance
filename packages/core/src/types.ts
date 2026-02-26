@@ -112,6 +112,64 @@ export interface ChainAdapter {
   getTokenPrice(tokenAddress: string): Promise<number>;
 }
 
+// ─── Vault Transaction Types ────────────────────────────────────
+
+export type VaultAction = "deposit" | "withdraw" | "approve";
+
+export type TransactionStatus =
+  | "idle"
+  | "pending-wallet"
+  | "pending-confirmation"
+  | "confirmed"
+  | "failed";
+
+export interface TransactionStep {
+  action: VaultAction;
+  label: string;
+  status: TransactionStatus;
+  txHash?: string;
+  error?: string;
+}
+
+export interface DepositParams {
+  poolId: string;
+  chainId: ChainId;
+  protocol: Protocol;
+  contractAddress: string;
+  tokens: Array<{
+    address: string;
+    symbol: string;
+    decimals: number;
+    amount: bigint;
+  }>;
+  spender: string;
+}
+
+export interface WithdrawParams {
+  poolId: string;
+  chainId: ChainId;
+  protocol: Protocol;
+  contractAddress: string;
+  token: {
+    address: string;
+    symbol: string;
+    decimals: number;
+    amount: bigint;
+  };
+}
+
+export interface TransactionRecord {
+  id: string;
+  action: VaultAction;
+  poolName: string;
+  chainId: ChainId;
+  protocol: Protocol;
+  amountUsd: number;
+  txHash: string;
+  status: "confirmed" | "failed";
+  timestamp: number;
+}
+
 // ─── API Types ──────────────────────────────────────────────────
 
 export interface PoolFilters {
