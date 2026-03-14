@@ -120,8 +120,9 @@ export function ButterflyCanvas() {
         if (!ctx || this.opacity <= 0.01) return;
         const alpha = this.opacity;
         if (this.trail.length > 2) {
-          ctx.beginPath(); ctx.moveTo(this.trail[0].x, this.trail[0].y);
-          for (let i = 1; i < this.trail.length; i++) ctx.lineTo(this.trail[i].x, this.trail[i].y);
+          const t0 = this.trail[0]!;
+          ctx.beginPath(); ctx.moveTo(t0.x, t0.y);
+          for (let i = 1; i < this.trail.length; i++) { const ti = this.trail[i]!; ctx.lineTo(ti.x, ti.y); }
           ctx.strokeStyle = `rgba(${this.color1.r},${this.color1.g},${this.color1.b},${alpha * 0.1})`;
           ctx.lineWidth = 1; ctx.stroke();
         }
