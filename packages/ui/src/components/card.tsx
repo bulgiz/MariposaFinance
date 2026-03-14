@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 import * as React from "react";
 import { cn } from "../lib/utils.js";
 

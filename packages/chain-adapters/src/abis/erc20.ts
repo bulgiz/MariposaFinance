@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 export const erc20Abi = [
   {
     inputs: [{ name: "account", type: "address" }],

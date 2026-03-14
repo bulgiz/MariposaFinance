@@ -1,13 +1,37 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 import type { Metadata } from "next";
 import { Providers } from "@/components/providers";
-import { Navbar } from "@/components/navbar";
+import { ConditionalShell } from "@/components/conditional-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Mariposa Finance — Multi-Chain DeFi Yield Aggregator",
+  title:
+    "Mariposa Finance — Multi-Chain DeFi Yield Aggregator | Auto-Compounding Vaults",
   description:
-    "Auto-compounding vaults across Base, Arbitrum, and more. From cocoon to butterfly.",
-  keywords: ["DeFi", "yield", "aggregator", "vaults", "Base", "Arbitrum"],
+    "Mariposa Finance is a next-generation multi-chain DeFi yield aggregator. Auto-compounding vaults (Jardines) across Base, Arbitrum, Ethereum, Solana, and 9+ chains. Earn the best yields effortlessly with ZAP deposits, DEX aggregation, and the $CAPULLO governance token.",
+  keywords: [
+    "DeFi yield aggregator",
+    "auto-compounding vaults",
+    "yield farming",
+    "Base",
+    "Arbitrum",
+    "Ethereum",
+    "Solana",
+    "multi-chain DeFi",
+    "DEX aggregator",
+    "$CAPULLO token",
+    "Mariposa Finance",
+    "Jardines vaults",
+    "liquidity farming",
+    "DeFi portfolio tracker",
+    "best DeFi yields",
+    "cross-chain yield optimizer",
+    "Mariposa Connect",
+    "encrypted messenger",
+    "relay staking",
+  ],
 };
 
 export default function RootLayout({
@@ -19,13 +43,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className="font-sans antialiased">
         <Providers>
-          <div className="flex min-h-screen flex-col">
-            <Navbar />
-            <main className="flex-1">{children}</main>
-            <footer className="border-t border-border py-6 text-center text-sm text-muted-foreground">
-              <p>Mariposa Finance — From cocoon to butterfly</p>
-            </footer>
-          </div>
+          <ConditionalShell>{children}</ConditionalShell>
         </Providers>
       </body>
     </html>

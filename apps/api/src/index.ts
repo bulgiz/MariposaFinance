@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { PoolService } from "./pool-service.js";
 import { registerPoolRoutes } from "./routes/pools.js";
+import { registerSwapRoutes } from "./routes/swap.js";
 
 const PORT = Number(process.env["API_PORT"] ?? 3001);
 const HOST = process.env["API_HOST"] ?? "0.0.0.0";
@@ -18,13 +22,14 @@ async function main() {
     },
   });
 
-  // CORS — allow frontend origin
+  // CORS — allow frontend origins
   await app.register(cors, {
     origin: [
       "http://localhost:3000",
       "https://mariposa.finance",
+      /^http:\/\/192\.168\.\d+\.\d+/,
     ],
-    methods: ["GET"],
+    methods: ["GET", "POST"],
   });
 
   // Rate limiting
@@ -39,6 +44,9 @@ async function main() {
   // Pool service and routes
   const poolService = new PoolService();
   registerPoolRoutes(app, poolService);
+
+  // Swap routes (1inch proxy)
+  registerSwapRoutes(app);
 
   // Start server
   try {

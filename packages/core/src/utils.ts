@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 import type { ChainId, Pool, PoolFilters } from "./types.js";
 
 /**
@@ -30,7 +33,8 @@ export function formatUsd(value: number): string {
 /**
  * Format APY as a percentage string.
  */
-export function formatApy(apy: number): string {
+export function formatApy(apy: number | null | undefined): string {
+  if (apy == null) return "—";
   if (apy >= 1000) {
     return `${(apy / 1000).toFixed(1)}K%`;
   }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 "use client";
 
 import Link from "next/link";
@@ -21,6 +24,12 @@ export function Navbar() {
               className="text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               Jardines
+            </Link>
+            <Link
+              href="/swap"
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Swap
             </Link>
             <Link
               href="/portfolio"

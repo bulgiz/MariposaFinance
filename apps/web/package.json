@@ -1,5 +1,6 @@
 {
   "name": "@mariposa/web",
+  "license": "BUSL-1.1",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -11,6 +12,7 @@
     "clean": "rm -rf .next"
   },
   "dependencies": {
+    "@mariposa/chain-adapters": "*",
     "@mariposa/core": "*",
     "@mariposa/ui": "*",
     "next": "^15.1.0",

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 import Redis from "ioredis";
 import { POOL_CACHE_TTL } from "@mariposa/core";
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 export { erc20Abi } from "./erc20.js";
 export {
   uniswapV3FactoryAbi,

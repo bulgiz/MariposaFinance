@@ -1,0 +1,50 @@
+module.exports = {
+  apps: [
+    {
+      name: 'mariposa-web',
+      cwd: '/var/www/mariposa/apps/web',
+      // next start — confirmed from apps/web/package.json "start": "next start"
+      script: 'node_modules/.bin/next',
+      args: 'start',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+      },
+      max_memory_restart: '1G',
+      max_restarts: 10,
+      min_uptime: '10s',
+      restart_delay: 5000,
+      autorestart: true,
+      watch: false,
+      merge_logs: true,
+      error_file: '/var/www/mariposa/logs/web-error.log',
+      out_file: '/var/www/mariposa/logs/web-out.log',
+    },
+    {
+      name: 'mariposa-api',
+      cwd: '/var/www/mariposa/apps/api',
+      // node dist/index.js — confirmed from apps/api/package.json "main": "./dist/index.js"
+      script: 'node',
+      args: 'dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3001,
+        HOST: '127.0.0.1',
+        REDIS_URL: 'redis://127.0.0.1:6379',
+      },
+      max_memory_restart: '800M',
+      max_restarts: 10,
+      min_uptime: '10s',
+      restart_delay: 5000,
+      autorestart: true,
+      watch: false,
+      merge_logs: true,
+      error_file: '/var/www/mariposa/logs/api-error.log',
+      out_file: '/var/www/mariposa/logs/api-out.log',
+    },
+  ],
+};

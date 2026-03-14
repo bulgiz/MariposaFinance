@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 /** Performance fee taken on vault harvests (4.5%) */
 export const PERFORMANCE_FEE_BPS = 450;
 
@@ -15,6 +18,51 @@ export const POOL_CACHE_TTL = 60;
 
 /** API rate limit: requests per minute */
 export const API_RATE_LIMIT = 100;
+
+/** Swap token list cache TTL in seconds (1 hour) */
+export const SWAP_TOKEN_CACHE_TTL = 3600;
+
+/** Swap price cache TTL in seconds (30s) */
+export const SWAP_PRICE_CACHE_TTL = 30;
+
+/** EVM chains that support swap aggregation */
+export const SUPPORTED_SWAP_CHAINS = [
+  1, 10, 56, 137, 250, 324, 8453, 42161, 43114,
+] as const;
+
+/** EVM chain display names */
+export const EVM_CHAIN_NAMES: Record<number, string> = {
+  1: "Ethereum",
+  10: "Optimism",
+  56: "BNB Chain",
+  137: "Polygon",
+  250: "Fantom",
+  324: "zkSync Era",
+  8453: "Base",
+  42161: "Arbitrum",
+  43114: "Avalanche",
+} as const;
+
+/** Non-EVM chains with their swap aggregators */
+export const NON_EVM_CHAINS = {
+  solana: { name: "Solana", aggregator: "jupiter" },
+  algorand: { name: "Algorand", aggregator: "tinyman" },
+  sui: { name: "Sui", aggregator: "cetus" },
+  aptos: { name: "Aptos", aggregator: "liquidswap" },
+} as const;
+
+/** Aggregators available per EVM chain */
+export const EVM_AGGREGATORS: Record<number, readonly string[]> = {
+  1: ["oneinch", "zerox", "paraswap", "openocean"],
+  10: ["oneinch", "zerox", "paraswap", "openocean"],
+  56: ["oneinch", "zerox", "paraswap", "openocean"],
+  137: ["oneinch", "zerox", "paraswap", "openocean"],
+  250: ["oneinch", "zerox", "paraswap", "openocean"],
+  324: ["oneinch", "openocean"],
+  8453: ["oneinch", "zerox", "paraswap", "openocean"],
+  42161: ["oneinch", "zerox", "paraswap", "openocean"],
+  43114: ["oneinch", "zerox", "paraswap", "openocean"],
+} as const;
 
 /** Brand colors */
 export const COLORS = {

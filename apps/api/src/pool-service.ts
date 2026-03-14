@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 import type { ChainAdapter, Pool, GlobalStats, Portfolio, Position } from "@mariposa/core";
 import { filterAndSortPools, type PoolFilters, POOL_CACHE_TTL } from "@mariposa/core";
 import { BaseAdapter } from "@mariposa/chain-adapters";

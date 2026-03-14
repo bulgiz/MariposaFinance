@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 "use client";
 
 import { useState } from "react";
@@ -9,6 +12,8 @@ import { formatApy, formatUsd, getChainName } from "@mariposa/core";
 import { Badge, Button, Skeleton } from "@mariposa/ui";
 import { DepositModal } from "@/components/deposit-modal";
 import { WithdrawModal } from "@/components/withdraw-modal";
+import { VaultComingSoon } from "@/components/vault-coming-soon";
+import { ENABLE_VAULT_WRITES } from "@/config/features";
 
 export default function PoolDetailPage() {
   const params = useParams();
@@ -155,7 +160,7 @@ export default function PoolDetailPage() {
 
         {/* Action Buttons */}
         <div className="border-t border-border pt-6 mt-6 flex flex-wrap gap-3">
-          {depositsSupported && (
+          {depositsSupported && ENABLE_VAULT_WRITES && (
             <>
               <Button onClick={() => setDepositOpen(true)} size="lg">
                 {pool.type === "lending" ? "Supply" : "Deposit"}
@@ -184,20 +189,31 @@ export default function PoolDetailPage() {
             </a>
           )}
         </div>
+
+        {/* Vault Coming Soon (when writes are disabled) */}
+        {depositsSupported && !ENABLE_VAULT_WRITES && (
+          <div className="mt-6">
+            <VaultComingSoon />
+          </div>
+        )}
       </div>
 
-      {/* Modals */}
-      <DepositModal
-        pool={pool}
-        isOpen={depositOpen}
-        onClose={() => setDepositOpen(false)}
-      />
-      <WithdrawModal
-        pool={pool}
-        position={userPosition}
-        isOpen={withdrawOpen}
-        onClose={() => setWithdrawOpen(false)}
-      />
+      {/* Modals (only rendered when vault writes enabled) */}
+      {ENABLE_VAULT_WRITES && (
+        <>
+          <DepositModal
+            pool={pool}
+            isOpen={depositOpen}
+            onClose={() => setDepositOpen(false)}
+          />
+          <WithdrawModal
+            pool={pool}
+            position={userPosition}
+            isOpen={withdrawOpen}
+            onClose={() => setWithdrawOpen(false)}
+          />
+        </>
+      )}
     </div>
   );
 }

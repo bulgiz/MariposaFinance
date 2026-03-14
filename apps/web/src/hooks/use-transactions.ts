@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 "use client";
 
 import { useState, useCallback } from "react";
@@ -11,6 +14,7 @@ import { parseUnits, maxUint256 } from "viem";
 import { config } from "@/lib/wagmi";
 import type { Pool, TransactionStep } from "@mariposa/core";
 import { PROTOCOLS } from "@mariposa/core";
+import { ENABLE_VAULT_WRITES } from "@/config/features";
 import {
   erc20Abi,
   aaveV3PoolAbi,
@@ -87,6 +91,25 @@ export function useDeposit({ pool, onSuccess }: UseDepositOptions) {
   const { writeContractAsync } = useWriteContract();
 
   const spender = getSpenderAddress(pool);
+
+  // Gate behind feature flag — return disabled state when vault writes are off
+  if (!ENABLE_VAULT_WRITES) {
+    return {
+      deposit: async () => {
+        /* vault writes disabled */
+      },
+      steps: [
+        {
+          action: "deposit" as const,
+          label: "Vault deposits are currently disabled (audit in progress)",
+          status: "failed" as const,
+          error: "Vault deposits are temporarily disabled while smart contracts are being audited.",
+        },
+      ],
+      isTransacting: false,
+      spender,
+    };
+  }
 
   const updateStep = useCallback(
     (index: number, update: Partial<TransactionStep>) => {
@@ -325,6 +348,24 @@ export function useWithdraw({ pool, onSuccess }: UseWithdrawOptions) {
   const { writeContractAsync } = useWriteContract();
 
   const spender = getSpenderAddress(pool);
+
+  // Gate behind feature flag — return disabled state when vault writes are off
+  if (!ENABLE_VAULT_WRITES) {
+    return {
+      withdraw: async () => {
+        /* vault writes disabled */
+      },
+      steps: [
+        {
+          action: "withdraw" as const,
+          label: "Vault withdrawals are currently disabled (audit in progress)",
+          status: "failed" as const,
+          error: "Vault withdrawals are temporarily disabled while smart contracts are being audited.",
+        },
+      ],
+      isTransacting: false,
+    };
+  }
 
   const updateStep = useCallback(
     (index: number, update: Partial<TransactionStep>) => {

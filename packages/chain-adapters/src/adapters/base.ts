@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 import { createPublicClient, http, formatUnits } from "viem";
 import { base } from "viem/chains";
 import type { ChainAdapter, Pool, Position, Token } from "@mariposa/core";

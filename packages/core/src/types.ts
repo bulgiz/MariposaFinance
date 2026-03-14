@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 /**
  * Core type definitions for Mariposa Finance.
  * All packages share these types for cross-chain DeFi yield aggregation.
@@ -5,8 +8,30 @@
 
 // ─── Chain Types ────────────────────────────────────────────────
 
-/** Supported chain IDs */
-export type ChainId = 8453 | 42161; // Base, Arbitrum
+/** Supported EVM chain IDs */
+export type EvmChainId =
+  | 1      // Ethereum
+  | 10     // Optimism
+  | 56     // BNB Smart Chain
+  | 137    // Polygon
+  | 250    // Fantom
+  | 324    // zkSync Era
+  | 8453   // Base
+  | 42161  // Arbitrum
+  | 43114; // Avalanche
+
+/** Non-EVM chain identifiers (for future multi-ecosystem support) */
+export type NonEvmChain = "solana" | "algorand" | "sui" | "aptos";
+
+/** All chain identifiers — EVM (numeric) + non-EVM (string) */
+export type AnyChainId = EvmChainId | NonEvmChain;
+
+/**
+ * ChainId for pool/vault features — chains with active adapters.
+ * Use EvmChainId for swap features (all 9 EVM chains).
+ * Use AnyChainId for future cross-ecosystem features.
+ */
+export type ChainId = 8453 | 42161;
 
 export interface ChainConfig {
   id: ChainId;
@@ -168,6 +193,100 @@ export interface TransactionRecord {
   txHash: string;
   status: "confirmed" | "failed";
   timestamp: number;
+}
+
+// ─── Swap Types ─────────────────────────────────────────────────
+
+export interface TokenInfo {
+  address: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoURI?: string;
+}
+
+export interface SwapQuoteParams {
+  src: string;
+  dst: string;
+  amount: string;
+  from: string;
+  slippage: number;
+  chainId: ChainId;
+  referrer?: string;
+  fee?: number;
+}
+
+export interface SwapQuoteResponse {
+  fromToken: TokenInfo;
+  toToken: TokenInfo;
+  fromAmount: string;
+  toAmount: string;
+  /** Transaction data ready to send */
+  tx: {
+    from: string;
+    to: string;
+    data: string;
+    value: string;
+    gas: number;
+    gasPrice: string;
+  };
+  /** Estimated gas in native units */
+  estimatedGas: number;
+  /** Price impact as a percentage (e.g. 0.5 = 0.5%) */
+  priceImpact?: number;
+  /** Exchange rate: how many dst tokens per 1 src token */
+  exchangeRate: string;
+}
+
+export interface SwapTransaction {
+  id: string;
+  chainId: ChainId;
+  fromToken: TokenInfo;
+  toToken: TokenInfo;
+  fromAmount: string;
+  toAmount: string;
+  txHash: string;
+  status: "pending" | "confirmed" | "failed";
+  timestamp: number;
+}
+
+// ─── Smart Routing Types ────────────────────────────────────────
+
+/** Supported swap aggregator identifiers */
+export type AggregatorId =
+  | "oneinch"
+  | "zerox"
+  | "paraswap"
+  | "openocean"
+  | "jupiter"
+  | "tinyman"
+  | "cetus"
+  | "liquidswap";
+
+/** A quote returned by a single aggregator */
+export interface AggregatorQuote {
+  aggregator: AggregatorId;
+  toAmount: string;
+  estimatedGas: number;
+  priceImpact: number;
+  tx: {
+    from: string;
+    to: string;
+    data: string;
+    value: string;
+    gas: number;
+    gasPrice: string;
+  };
+}
+
+/** Smart router result comparing multiple aggregators */
+export interface SmartRouterResult {
+  /** The best quote (highest output after fees + gas) */
+  bestQuote: AggregatorQuote;
+  /** All quotes for transparency */
+  allQuotes: AggregatorQuote[];
+  /** How much better vs worst quote (e.g. "Saving $2.34 vs 1inch") */
+  savings: string;
 }
 
 // ─── API Types ──────────────────────────────────────────────────

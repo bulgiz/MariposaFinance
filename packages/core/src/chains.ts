@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025 Mariposa Finance
+
 import type { ChainConfig, ChainId } from "./types.js";
 
 export const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
