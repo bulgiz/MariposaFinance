@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAccount } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { parseUnits, formatUnits } from "viem";
@@ -31,6 +31,8 @@ const AGG_LABELS: Record<string, string> = {
   "1inch": "1inch",
 };
 
+const REFRESH_INTERVAL_SEC = 15;
+
 export function SwapWidget() {
   const { address, isConnected } = useAccount();
   const {
@@ -49,14 +51,24 @@ export function SwapWidget() {
   const [fromToken, setFromToken] = useState<TokenInfo | null>(null);
   const [toToken, setToToken] = useState<TokenInfo | null>(null);
   const [amount, setAmount] = useState("");
-  const [toAmount, setToAmount] = useState("");          // editable "you receive"
-  const [quoteDirection, setQuoteDirection] = useState<"from" | "to">("from");
+  const [toAmount, setToAmount] = useState("");
   const [slippage, setSlippage] = useState(2);
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [selectedChain, setSelectedChain] = useState<EvmChainId>(8453);
   const [isLoadingTokens, setIsLoadingTokens] = useState(false);
   const [isQuoting, setIsQuoting] = useState(false);
   const [preferredAggregator, setPreferredAggregator] = useState<"0x" | "velora" | "auto">("auto");
+  const [refreshCountdown, setRefreshCountdown] = useState<number | null>(null);
+
+  // Refs so callbacks don't need stale deps
+  const quoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const quoteRef = useRef(quote);
+  const fromTokenRef = useRef(fromToken);
+  const toTokenRef = useRef(toToken);
+  useEffect(() => { quoteRef.current = quote; }, [quote]);
+  useEffect(() => { fromTokenRef.current = fromToken; }, [fromToken]);
+  useEffect(() => { toTokenRef.current = toToken; }, [toToken]);
 
   // Fetch token balance for "from" token (native-aware, chain-aware)
   const { data: fromBalance } = useTokenBalance(
@@ -68,25 +80,18 @@ export function SwapWidget() {
   // Load tokens for the selected chain
   useEffect(() => {
     let cancelled = false;
-
     async function loadTokens() {
       setIsLoadingTokens(true);
       try {
         const result = await fetchSwapTokens(selectedChain);
         if (cancelled) return;
-
         const tokenData = result.data as { tokens?: Record<string, TokenInfo> };
         if (tokenData?.tokens) {
-          const tokenList = Object.values(tokenData.tokens);
-          setTokens(tokenList);
+          setTokens(Object.values(tokenData.tokens));
         }
-      } catch {
-        // Token list failed to load — leave empty
-      } finally {
-        if (!cancelled) setIsLoadingTokens(false);
-      }
+      } catch { /* leave empty */ }
+      finally { if (!cancelled) setIsLoadingTokens(false); }
     }
-
     loadTokens();
     return () => { cancelled = true; };
   }, [selectedChain]);
@@ -97,125 +102,160 @@ export function SwapWidget() {
     setToToken(null);
     setAmount("");
     setToAmount("");
-    setQuoteDirection("from");
+    setRefreshCountdown(null);
+    if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
+    if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
     reset();
   }, [selectedChain, reset]);
 
-  // Fetch quote when inputs change (debounced)
-  useEffect(() => {
-    if (!fromToken || !toToken) return;
-
-    // Decide which direction to quote based on which field the user last edited
-    if (quoteDirection === "from") {
-      if (!amount) return;
-      const parsed = parseFloat(amount);
-      if (isNaN(parsed) || parsed <= 0) return;
-    } else {
-      if (!toAmount) return;
-      const parsed = parseFloat(toAmount);
-      if (isNaN(parsed) || parsed <= 0) return;
-    }
-
-    const timeout = setTimeout(async () => {
-      setIsQuoting(true);
-      try {
-        let amountWei: string;
-        if (quoteDirection === "from") {
-          amountWei = parseUnits(amount, fromToken.decimals).toString();
-        } else {
-          // Reverse quote: we know the output, back-calculate input via a direct
-          // "sell enough to get X" — swap src/dst and use toAmount as the sell amount,
-          // then use the returned exchange rate to set the fromAmount
-          // For now: estimate from amount = toAmount / exchangeRate (if quote exists)
-          // then re-quote with that estimated from amount
-          const toAmtWei = parseUnits(toAmount, toToken.decimals);
-          // Estimate sell amount using last known rate or 1:1 if no quote yet
-          const rate = quote
-            ? parseFloat(quote.exchangeRate)
-            : 1;
-          const estimatedFrom = rate > 0
-            ? (parseFloat(toAmount) / rate).toFixed(fromToken.decimals)
-            : toAmount;
-          amountWei = parseUnits(estimatedFrom, fromToken.decimals).toString();
-          void toAmtWei; // used for estimation above
-        }
-
-        const result = await fetchQuote({
-          src: fromToken.address,
-          dst: toToken.address,
-          amount: amountWei,
-          slippage,
-          chainId: selectedChain,
-          aggregator: preferredAggregator,
-        });
-
-        // Sync the other field from the returned quote
-        if (result) {
-          const receivedAmt = formatUnits(BigInt(result.toAmount), toToken.decimals);
-          const sentAmt = formatUnits(BigInt(result.fromAmount), fromToken.decimals);
-          if (quoteDirection === "from") {
-            setToAmount(parseFloat(receivedAmt).toFixed(6));
-          } else {
-            setAmount(parseFloat(sentAmt).toFixed(6));
-          }
-        }
-      } finally {
-        setIsQuoting(false);
+  // ─── Core quote runner ──────────────────────────────────────────
+  // Called directly — never put quote/toAmount/amount in its deps to avoid loops.
+  const runQuote = useCallback(async (
+    fromTok: TokenInfo,
+    toTok: TokenInfo,
+    sellAmount: string,
+    quoteSlippage: number,
+    chainId: EvmChainId,
+    agg: "0x" | "velora" | "auto",
+  ) => {
+    setIsQuoting(true);
+    try {
+      const amountWei = parseUnits(sellAmount, fromTok.decimals).toString();
+      const result = await fetchQuote({
+        src: fromTok.address,
+        dst: toTok.address,
+        amount: amountWei,
+        slippage: quoteSlippage,
+        chainId,
+        aggregator: agg,
+      });
+      if (result) {
+        const received = formatUnits(BigInt(result.toAmount), toTok.decimals);
+        setToAmount(parseFloat(received).toFixed(6));
       }
-    }, 600);
+    } finally {
+      setIsQuoting(false);
+    }
+  }, [fetchQuote]);
 
-    return () => clearTimeout(timeout);
-  }, [fromToken, toToken, amount, toAmount, quoteDirection, slippage, selectedChain, preferredAggregator, fetchQuote, quote]);
+  // ─── Refresh countdown ──────────────────────────────────────────
+  const startRefreshCountdown = useCallback((
+    fromTok: TokenInfo,
+    toTok: TokenInfo,
+    sellAmt: string,
+    quoteSlippage: number,
+    chainId: EvmChainId,
+    agg: "0x" | "velora" | "auto",
+  ) => {
+    if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    let remaining = REFRESH_INTERVAL_SEC;
+    setRefreshCountdown(remaining);
+    refreshTimerRef.current = setInterval(() => {
+      remaining -= 1;
+      setRefreshCountdown(remaining);
+      if (remaining <= 0) {
+        clearInterval(refreshTimerRef.current!);
+        refreshTimerRef.current = null;
+        setRefreshCountdown(null);
+        void runQuote(fromTok, toTok, sellAmt, quoteSlippage, chainId, agg).then(() => {
+          // restart countdown after refresh
+          startRefreshCountdown(fromTok, toTok, sellAmt, quoteSlippage, chainId, agg);
+        });
+      }
+    }, 1000);
+  }, [runQuote]);
+
+  // ─── Schedule a quote after user input (debounced 1.5s) ─────────
+  const scheduleQuote = useCallback((
+    fromTok: TokenInfo | null,
+    toTok: TokenInfo | null,
+    sellAmt: string,
+    quoteSlippage: number,
+    chainId: EvmChainId,
+    agg: "0x" | "velora" | "auto",
+    delayMs = 1500,
+  ) => {
+    if (refreshTimerRef.current) { clearInterval(refreshTimerRef.current); refreshTimerRef.current = null; }
+    setRefreshCountdown(null);
+    if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
+
+    if (!fromTok || !toTok || !sellAmt || parseFloat(sellAmt) <= 0) return;
+
+    quoteTimerRef.current = setTimeout(async () => {
+      await runQuote(fromTok, toTok, sellAmt, quoteSlippage, chainId, agg);
+      startRefreshCountdown(fromTok, toTok, sellAmt, quoteSlippage, chainId, agg);
+    }, delayMs);
+  }, [runQuote, startRefreshCountdown]);
+
+  // ─── Input handlers — only these trigger new quotes ─────────────
+  const handleFromAmountChange = useCallback((val: string) => {
+    setAmount(val);
+    setToAmount("");
+    scheduleQuote(fromTokenRef.current, toTokenRef.current, val, slippage, selectedChain, preferredAggregator);
+  }, [slippage, selectedChain, preferredAggregator, scheduleQuote]);
+
+  const handleToAmountChange = useCallback((val: string) => {
+    setToAmount(val);
+    if (!val) { setAmount(""); return; }
+    // Reverse: estimate sell amount from last known rate
+    const rate = quoteRef.current ? parseFloat(quoteRef.current.exchangeRate) : 0;
+    if (rate > 0 && fromTokenRef.current) {
+      const estimated = (parseFloat(val) / rate).toFixed(fromTokenRef.current.decimals > 6 ? 6 : fromTokenRef.current.decimals);
+      setAmount(estimated);
+      scheduleQuote(fromTokenRef.current, toTokenRef.current, estimated, slippage, selectedChain, preferredAggregator);
+    }
+  }, [slippage, selectedChain, preferredAggregator, scheduleQuote]);
+
+  const handleTokenChange = useCallback((
+    newFrom: TokenInfo | null,
+    newTo: TokenInfo | null,
+    currentAmount: string,
+  ) => {
+    scheduleQuote(newFrom, newTo, currentAmount, slippage, selectedChain, preferredAggregator, 800);
+  }, [slippage, selectedChain, preferredAggregator, scheduleQuote]);
 
   const handleFlip = useCallback(() => {
     const prevFrom = fromToken;
     const prevTo = toToken;
+    const prevAmount = toAmount;
     setFromToken(prevTo);
     setToToken(prevFrom);
-    setAmount(toAmount);
+    setAmount(prevAmount);
     setToAmount(amount);
-    setQuoteDirection("from");
+    scheduleQuote(prevTo, prevFrom, prevAmount, slippage, selectedChain, preferredAggregator, 800);
     reset();
-  }, [fromToken, toToken, amount, toAmount, reset]);
+  }, [fromToken, toToken, amount, toAmount, slippage, selectedChain, preferredAggregator, scheduleQuote, reset]);
 
   const handleMaxClick = useCallback(() => {
     if (!fromBalance || !fromToken) return;
     const formatted = formatUnits(fromBalance as bigint, fromToken.decimals);
     setAmount(formatted);
-    setQuoteDirection("from");
-  }, [fromBalance, fromToken]);
+    setToAmount("");
+    scheduleQuote(fromToken, toToken, formatted, slippage, selectedChain, preferredAggregator);
+  }, [fromBalance, fromToken, toToken, slippage, selectedChain, preferredAggregator, scheduleQuote]);
 
-  const handleFromAmountChange = useCallback((val: string) => {
-    setAmount(val);
-    setQuoteDirection("from");
-    if (!val) setToAmount("");
-  }, []);
+  const handleAggregatorChange = useCallback((agg: "0x" | "velora") => {
+    setPreferredAggregator(agg);
+    if (fromToken && toToken && amount) {
+      scheduleQuote(fromToken, toToken, amount, slippage, selectedChain, agg, 300);
+    }
+  }, [fromToken, toToken, amount, slippage, selectedChain, scheduleQuote]);
 
-  const handleToAmountChange = useCallback((val: string) => {
-    setToAmount(val);
-    setQuoteDirection("to");
-    if (!val) setAmount("");
-  }, []);
+  const handleSlippageChange = useCallback((val: number) => {
+    setSlippage(val);
+    scheduleQuote(fromTokenRef.current, toTokenRef.current, amount, val, selectedChain, preferredAggregator, 800);
+  }, [amount, selectedChain, preferredAggregator, scheduleQuote]);
 
   // Fee breakdown
   const feeBreakdown = useMemo(() => {
     if (!quote || !fromToken) return null;
-    const feePct = 0.15;
     const sellAmt = parseFloat(formatUnits(BigInt(quote.fromAmount), fromToken.decimals));
-    const feeAmt = sellAmt * (feePct / 100);
-    return { pct: feePct, tokenAmt: feeAmt.toFixed(6), symbol: fromToken.symbol };
+    const feeAmt = sellAmt * 0.0015;
+    return { tokenAmt: feeAmt.toFixed(6), symbol: fromToken.symbol };
   }, [quote, fromToken]);
 
   const isWrongChain = isConnected && walletChainId !== undefined && walletChainId !== selectedChain;
-  const canSwap =
-    isConnected &&
-    !isWrongChain &&
-    fromToken &&
-    toToken &&
-    amount &&
-    quote &&
-    !isPending &&
-    !isConfirming;
+  const canSwap = isConnected && !isWrongChain && fromToken && toToken && amount && quote && !isPending && !isConfirming;
 
   return (
     <div className="w-full max-w-md mx-auto">
@@ -223,7 +263,21 @@ export function SwapWidget() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold">Smart Swap</h2>
-          <SlippageSettings slippage={slippage} onSlippageChange={setSlippage} />
+          <div className="flex items-center gap-2">
+            {/* Refresh countdown */}
+            {refreshCountdown !== null && !isQuoting && (
+              <span className="text-xs text-muted-foreground tabular-nums">
+                ↻ {refreshCountdown}s
+              </span>
+            )}
+            {isQuoting && (
+              <svg className="h-3.5 w-3.5 animate-spin text-muted-foreground" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+              </svg>
+            )}
+            <SlippageSettings slippage={slippage} onSlippageChange={handleSlippageChange} />
+          </div>
         </div>
 
         {/* Chain Selector */}
@@ -270,7 +324,7 @@ export function SwapWidget() {
             <TokenSelector
               tokens={tokens}
               selectedToken={fromToken}
-              onSelect={setFromToken}
+              onSelect={(t) => { setFromToken(t); handleTokenChange(t, toToken, amount); }}
               label="Select"
             />
           </div>
@@ -283,18 +337,8 @@ export function SwapWidget() {
             className="rounded-xl border border-border bg-card p-2 hover:bg-secondary transition-colors"
             aria-label="Swap direction"
           >
-            <svg
-              className="h-5 w-5 text-muted-foreground"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"
-              />
+            <svg className="h-5 w-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
             </svg>
           </button>
         </div>
@@ -303,34 +347,29 @@ export function SwapWidget() {
         <div className="rounded-xl bg-secondary p-4 mt-2">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs text-muted-foreground">You receive</span>
-            {quoteDirection === "to" && isQuoting && (
-              <span className="text-xs text-muted-foreground animate-pulse">calculating...</span>
+            {isQuoting && (
+              <span className="text-xs text-muted-foreground animate-pulse">fetching...</span>
             )}
           </div>
           <div className="flex items-center gap-3">
             <Input
               type="number"
-              placeholder="0.0"
-              value={isQuoting && quoteDirection === "from" ? "" : toAmount}
+              placeholder={isQuoting ? "..." : "0.0"}
+              value={toAmount}
               onChange={(e) => handleToAmountChange(e.target.value)}
               className="border-0 bg-transparent text-2xl font-semibold p-0 h-auto focus-visible:ring-0"
               min={0}
               step="any"
             />
-            {isQuoting && quoteDirection === "from" && (
-              <span className="absolute text-2xl font-semibold text-muted-foreground animate-pulse pointer-events-none">
-                ...
-              </span>
-            )}
             <TokenSelector
               tokens={tokens}
               selectedToken={toToken}
-              onSelect={setToToken}
+              onSelect={(t) => { setToToken(t); handleTokenChange(fromToken, t, amount); }}
               label="Select"
             />
           </div>
           <p className="text-xs text-muted-foreground mt-1 opacity-60">
-            Enter an amount to receive and we&apos;ll calculate what you need to pay
+            Enter an amount to receive — we&apos;ll calculate what you need to pay
           </p>
         </div>
 
@@ -339,23 +378,12 @@ export function SwapWidget() {
           <div className="mt-4 rounded-xl border border-border p-4 space-y-2 text-sm">
             <div className="flex justify-between text-muted-foreground">
               <span>Rate</span>
-              <span>
-                1 {fromToken?.symbol} = {parseFloat(quote.exchangeRate).toFixed(6)}{" "}
-                {toToken?.symbol}
-              </span>
+              <span>1 {fromToken?.symbol} = {parseFloat(quote.exchangeRate).toFixed(6)} {toToken?.symbol}</span>
             </div>
             {quote.priceImpact !== undefined && (
               <div className="flex justify-between text-muted-foreground">
                 <span>Price Impact</span>
-                <span
-                  className={
-                    quote.priceImpact > 3
-                      ? "text-red-400"
-                      : quote.priceImpact > 1
-                      ? "text-amber-400"
-                      : "text-green-400"
-                  }
-                >
+                <span className={quote.priceImpact > 3 ? "text-red-400" : quote.priceImpact > 1 ? "text-amber-400" : "text-green-400"}>
                   {quote.priceImpact.toFixed(2)}%
                 </span>
               </div>
@@ -377,16 +405,13 @@ export function SwapWidget() {
           </div>
         )}
 
-        {/* Aggregator Comparison — clickable to select */}
+        {/* Aggregator Comparison — clickable */}
         {allQuotes && allQuotes.length > 0 && (
           <div className="mt-4 rounded-xl border border-border p-3 space-y-1.5">
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-medium text-muted-foreground">Route Comparison</p>
               {preferredAggregator !== "auto" && (
-                <button
-                  onClick={() => setPreferredAggregator("auto")}
-                  className="text-xs text-primary hover:underline"
-                >
+                <button onClick={() => setPreferredAggregator("auto")} className="text-xs text-primary hover:underline">
                   Use best
                 </button>
               )}
@@ -398,11 +423,7 @@ export function SwapWidget() {
               return (
                 <button
                   key={i}
-                  onClick={() => {
-                    if (q.success) {
-                      setPreferredAggregator(q.aggregator as "0x" | "velora");
-                    }
-                  }}
+                  onClick={() => { if (q.success) handleAggregatorChange(q.aggregator as "0x" | "velora"); }}
                   disabled={!q.success}
                   className={[
                     "w-full flex items-center justify-between text-xs rounded-lg px-3 py-2 transition-colors",
@@ -413,14 +434,10 @@ export function SwapWidget() {
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-foreground/80">{label}</span>
                     {isBest && preferredAggregator === "auto" && (
-                      <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded">
-                        best
-                      </span>
+                      <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded">best</span>
                     )}
                     {isSelected && preferredAggregator !== "auto" && (
-                      <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded">
-                        selected
-                      </span>
+                      <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded">selected</span>
                     )}
                     {q.success && q.sources && q.sources.length > 0 && (
                       <span className="text-muted-foreground/50">{q.sources.slice(0, 2).join(", ")}</span>
@@ -428,14 +445,10 @@ export function SwapWidget() {
                   </div>
                   {q.success && q.buyAmount && toToken ? (
                     <span className="font-mono text-foreground/70">
-                      {parseFloat(
-                        (Number(q.buyAmount) / Math.pow(10, toToken.decimals)).toFixed(6)
-                      ).toString()}{" "}{toToken.symbol}
+                      {parseFloat((Number(q.buyAmount) / Math.pow(10, toToken.decimals)).toFixed(6)).toString()} {toToken.symbol}
                     </span>
                   ) : (
-                    <span className="text-muted-foreground/40 text-[11px]">
-                      {q.error ? "failed" : "unavailable"}
-                    </span>
+                    <span className="text-muted-foreground/40 text-[11px]">{q.error ? "failed" : "unavailable"}</span>
                   )}
                 </button>
               );
@@ -446,46 +459,25 @@ export function SwapWidget() {
         {/* Swap Button */}
         <div className="mt-4">
           {!isConnected ? (
-            <div className="w-full flex justify-center">
-              <ConnectButton />
-            </div>
+            <div className="w-full flex justify-center"><ConnectButton /></div>
           ) : isSuccess ? (
-            <Button
-              className="w-full h-12 text-base"
-              onClick={() => {
-                reset();
-                setAmount("");
-                setToAmount("");
-              }}
-            >
+            <Button className="w-full h-12 text-base" onClick={() => { reset(); setAmount(""); setToAmount(""); setRefreshCountdown(null); }}>
               Swap Again
             </Button>
           ) : (
-            <Button
-              className="w-full h-12 text-base"
-              disabled={!canSwap}
-              onClick={executeSwap}
-            >
-              {isPending
-                ? "Waiting for wallet..."
-                : isConfirming
-                ? "Confirming..."
-                : isWrongChain
-                ? `Switch to ${CHAIN_OPTIONS.find(c => c.id === selectedChain)?.name ?? "correct"} network`
-                : !fromToken || !toToken
-                ? "Select tokens"
-                : !amount
-                ? "Enter amount"
-                : !quote
-                ? isQuoting
-                  ? "Getting quote..."
-                  : "Swap"
+            <Button className="w-full h-12 text-base" disabled={!canSwap} onClick={executeSwap}>
+              {isPending ? "Waiting for wallet..."
+                : isConfirming ? "Confirming..."
+                : isWrongChain ? `Switch to ${CHAIN_OPTIONS.find(c => c.id === selectedChain)?.name ?? "correct"} network`
+                : !fromToken || !toToken ? "Select tokens"
+                : !amount ? "Enter amount"
+                : isQuoting ? "Getting quote..."
+                : !quote ? "Swap"
                 : "Swap"}
             </Button>
           )}
         </div>
 
-        {/* Status Messages */}
         {isSuccess && (
           <div className="mt-3 rounded-lg bg-green-500/10 border border-green-500/20 p-3 text-center text-sm text-green-400">
             Swap completed successfully!
@@ -498,7 +490,6 @@ export function SwapWidget() {
           </div>
         )}
 
-        {/* Footer */}
         <div className="mt-4 flex flex-col gap-1 text-xs text-muted-foreground text-center">
           <span>Smart Routing — best price across 0x, Velora/ParaSwap</span>
           <span>Mariposa fee: 0.15%</span>
