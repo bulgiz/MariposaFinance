@@ -162,6 +162,7 @@ async function quoteVelora(params: {
     priceUrl.searchParams.set("partnerAddress", SWAP_FEE_RECIPIENT);
   }
 
+  console.log("[Velora /prices URL]", priceUrl.toString());
   const priceRes = await fetch(priceUrl.toString(), {
     headers: { Accept: "application/json" },
     signal: AbortSignal.timeout(8000),
@@ -190,7 +191,7 @@ async function quoteVelora(params: {
     Math.floor(Number(route.destAmount) * (1 - params.slippage / 100))
   );
 
-  const txBody = {
+  const txBody: Record<string, unknown> = {
     srcToken:   params.sellToken,
     destToken:  params.buyToken,
     srcAmount:  params.sellAmount,
@@ -198,9 +199,10 @@ async function quoteVelora(params: {
     priceRoute: route,
     userAddress: params.taker,
     partner:    VELORA_PARTNER,
-    // Note: fee params go in /prices step only — /transactions rejects them
-    // Note: use slippage via destAmount (min floor), NOT slippage field — Velora rejects both
+    // partnerAddress needed in /transactions for fee routing (partnerFee NOT included — rejects it)
+    ...(SWAP_FEE_RECIPIENT ? { partnerAddress: SWAP_FEE_RECIPIENT } : {}),
   };
+  console.log("[Velora /transactions body]", JSON.stringify({ partner: txBody["partner"], partnerAddress: txBody["partnerAddress"], destAmount: txBody["destAmount"], chainId: params.chainId }));
 
   const txRes = await fetch(
     `${VELORA_BASE_URL}/transactions/${params.chainId}?ignoreChecks=true`,
