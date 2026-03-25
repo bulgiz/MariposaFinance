@@ -63,7 +63,7 @@ const priceQuerySchema  = z.object({
 // ─── Rate Limit ─────────────────────────────────────────────────
 
 const rateMap = new Map<string, { count: number; resetAt: number }>();
-function checkRateLimit(ip: string, max = 10): boolean {
+function checkRateLimit(ip: string, max = 60): boolean {
   const now = Date.now();
   const entry = rateMap.get(ip);
   if (!entry || now > entry.resetAt) { rateMap.set(ip, { count: 1, resetAt: now + 60_000 }); return true; }
@@ -285,7 +285,7 @@ export function registerSwapRoutes(app: FastifyInstance) {
    */
   app.get("/swap/quote", async (request, reply) => {
     if (!checkRateLimit(request.ip)) {
-      return reply.status(429).send({ error: "Rate limit exceeded. Max 10 requests/minute." });
+      return reply.status(429).send({ error: "Too many requests. Please wait a moment before trying again." });
     }
 
     let query: z.infer<typeof quoteQuerySchema>;

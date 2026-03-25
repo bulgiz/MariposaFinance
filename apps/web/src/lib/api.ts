@@ -8,7 +8,13 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 async function fetchApi<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, { next: { revalidate: 60 } });
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    if (res.status === 429) throw new Error("Too many requests — please wait a moment.");
+    let errMsg = res.statusText || String(res.status);
+    try {
+      const body = await res.json() as { error?: string };
+      if (body?.error) errMsg = body.error;
+    } catch { /* ignore */ }
+    throw new Error(errMsg);
   }
   return res.json() as Promise<T>;
 }
