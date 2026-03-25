@@ -27,6 +27,7 @@ export function useSwap() {
   const { writeContractAsync } = useWriteContract();
 
   const [quote, setQuote] = useState<SwapQuoteResponse | null>(null);
+  const [allQuotes, setAllQuotes] = useState<SwapQuoteResponse["allQuotes"]>(undefined);
   const [status, setStatus] = useState<SwapStatus>("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -61,6 +62,7 @@ export function useSwap() {
           chainId: params.chainId,
         });
         setQuote(result.data);
+        setAllQuotes(result.data.allQuotes);
         return result.data;
       } catch (err) {
         const message =
@@ -138,12 +140,14 @@ export function useSwap() {
 
   const reset = useCallback(() => {
     setQuote(null);
+    setAllQuotes(undefined);
     setStatus("idle");
     setError(null);
   }, []);
 
   return {
     quote,
+    allQuotes,
     fetchQuote,
     executeSwap,
     reset,

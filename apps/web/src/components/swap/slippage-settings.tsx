@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Button, Input } from "@mariposa/ui";
 
-const PRESETS = [0.5, 1, 3] as const;
+const PRESETS = [0.5, 1, 2, 3] as const;
 
 interface SlippageSettingsProps {
   slippage: number;

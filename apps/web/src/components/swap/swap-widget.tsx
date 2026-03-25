@@ -29,6 +29,7 @@ export function SwapWidget() {
   const { address, isConnected } = useAccount();
   const {
     quote,
+    allQuotes,
     fetchQuote,
     executeSwap,
     reset,
@@ -42,16 +43,17 @@ export function SwapWidget() {
   const [fromToken, setFromToken] = useState<TokenInfo | null>(null);
   const [toToken, setToToken] = useState<TokenInfo | null>(null);
   const [amount, setAmount] = useState("");
-  const [slippage, setSlippage] = useState(1);
+  const [slippage, setSlippage] = useState(2);
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [selectedChain, setSelectedChain] = useState<EvmChainId>(8453);
   const [isLoadingTokens, setIsLoadingTokens] = useState(false);
   const [isQuoting, setIsQuoting] = useState(false);
 
-  // Fetch token balance for "from" token
+  // Fetch token balance for "from" token (use selectedChain so it works before wallet switch)
   const { data: fromBalance } = useTokenBalance(
     fromToken?.address,
-    address
+    address,
+    selectedChain
   );
 
   // Load tokens for the selected chain
@@ -351,9 +353,31 @@ export function SwapWidget() {
           </div>
         )}
 
+        {/* Aggregator Comparison */}
+        {allQuotes && allQuotes.length > 0 && (
+          <div className="mt-4 rounded-xl border border-border p-3 space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground mb-2">Quote Comparison</p>
+            {allQuotes.map((q, i) => (
+              <div key={i} className="flex items-center justify-between text-xs">
+                <span className="capitalize font-medium text-foreground/70">{q.aggregator}</span>
+                {q.success && q.buyAmount && toToken ? (
+                  <span className="text-green-400 font-mono">
+                    {parseFloat(
+                      (Number(q.buyAmount) / Math.pow(10, toToken.decimals)).toFixed(6)
+                    ).toString()}{" "}{toToken.symbol}
+                    {i === 0 && <span className="ml-1 text-[10px] bg-green-500/20 text-green-400 px-1 rounded">best</span>}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground/50">unavailable</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Footer */}
         <div className="mt-4 flex flex-col gap-1 text-xs text-muted-foreground text-center">
-          <span>Smart Routing — best price across 1inch, 0x, Paraswap, OpenOcean</span>
+          <span>Smart Routing — best price across 0x, Velora/ParaSwap</span>
           <span>Mariposa fee: 0.15%</span>
         </div>
       </div>

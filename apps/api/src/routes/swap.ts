@@ -49,7 +49,7 @@ const quoteQuerySchema = z.object({
   dst:      z.string().regex(/^0x[a-fA-F0-9]{40}$/, "Invalid destination token address"),
   amount:   z.string().regex(/^\d+$/, "Amount must be wei string"),
   from:     z.string().regex(/^0x[a-fA-F0-9]{40}$/, "Invalid wallet address"),
-  slippage: z.coerce.number().min(0).max(50).default(1),
+  slippage: z.coerce.number().min(0).max(50).default(2),
   chainId:  chainIdSchema,
 });
 
@@ -183,16 +183,22 @@ async function quoteVelora(params: {
   if (!route) throw new Error("Velora: no priceRoute in response");
 
   // Step 2: /transactions — build the calldata
+  // Apply slippage to get minimum acceptable output (not the full quoted amount).
+  // Velora interprets destAmount as the floor — if on-chain price returns less, tx reverts.
+  const minDestAmount = String(
+    Math.floor(Number(route.destAmount) * (1 - params.slippage / 100))
+  );
+
   const txBody = {
     srcToken:   params.sellToken,
     destToken:  params.buyToken,
     srcAmount:  params.sellAmount,
-    destAmount: route.destAmount,
+    destAmount: minDestAmount,
     priceRoute: route,
     userAddress: params.taker,
     partner:    VELORA_PARTNER,
-    // Note: fee params (partnerFee/partnerAddress) go in /prices step only — /transactions rejects them
-    // Note: when destAmount is provided, do NOT also send slippage — Velora rejects both
+    // Note: fee params go in /prices step only — /transactions rejects them
+    // Note: use slippage via destAmount (min floor), NOT slippage field — Velora rejects both
   };
 
   const txRes = await fetch(
@@ -310,12 +316,16 @@ export function registerSwapRoutes(app: FastifyInstance) {
       r.status === "fulfilled" ? [r.value] : []
     );
 
-    // Log which aggregators failed
-    results.forEach((r, i) => {
-      if (r.status === "rejected") {
-        const agg = i === 0 && use0x ? "0x" : "velora";
-        app.log.warn({ err: String(r.reason) }, `${agg} quote failed`);
+    // Build allQuotes including failures so UI can show "aggregator: unavailable"
+    const aggNames = [...(use0x ? ["0x"] : []), ...(useVelora ? ["velora"] : [])];
+    const allQuotes = results.map((r, i) => {
+      const agg = aggNames[i] ?? "unknown";
+      if (r.status === "fulfilled") {
+        return { aggregator: agg, success: true, buyAmount: r.value.buyAmount,
+                 sources: r.value.sources, gas: r.value.gas };
       }
+      app.log.warn({ err: String(r.reason) }, `${agg} quote failed`);
+      return { aggregator: agg, success: false, error: String(r.reason).slice(0, 120) };
     });
 
     // Pick best quote by highest buyAmount
@@ -323,14 +333,6 @@ export function registerSwapRoutes(app: FastifyInstance) {
       const best = successful.reduce((a, b) =>
         BigInt(b.buyAmount) > BigInt(a.buyAmount) ? b : a
       );
-
-      // Attach all quotes so frontend can show comparison
-      const all = successful.map((q) => ({
-        aggregator: q.aggregator,
-        buyAmount:  q.buyAmount,
-        sources:    q.sources,
-        gas:        q.gas,
-      }));
 
       app.log.info(
         { event: "swap_quote", aggregator: best.aggregator, chainId: query.chainId,
@@ -369,7 +371,7 @@ export function registerSwapRoutes(app: FastifyInstance) {
         estimatedGas: gasNum,
         exchangeRate: humanExchangeRate,
         aggregator:   best.aggregator,
-        allQuotes:    all,
+        allQuotes,
       } });
     }
 

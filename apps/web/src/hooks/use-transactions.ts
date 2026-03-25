@@ -26,13 +26,15 @@ import {
 
 export function useTokenBalance(
   tokenAddress: string | undefined,
-  userAddress: string | undefined
+  userAddress: string | undefined,
+  chainId?: number
 ) {
   return useReadContract({
     address: tokenAddress as `0x${string}`,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [userAddress as `0x${string}`],
+    chainId: chainId as 1 | 10 | 56 | 137 | 8453 | 42161 | 43114 | undefined,
     query: {
       enabled: !!tokenAddress && !!userAddress,
       refetchInterval: 15_000,

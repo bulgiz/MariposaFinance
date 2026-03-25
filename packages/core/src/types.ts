@@ -236,6 +236,15 @@ export interface SwapQuoteResponse {
   priceImpact?: number;
   /** Exchange rate: how many dst tokens per 1 src token */
   exchangeRate: string;
+  /** All aggregator quotes (for comparison display) */
+  allQuotes?: Array<{
+    aggregator: string;
+    success: boolean;
+    buyAmount?: string;
+    sources?: string[];
+    gas?: number;
+    error?: string;
+  }>;
 }
 
 export interface SwapTransaction {
@@ -256,6 +265,8 @@ export interface SwapTransaction {
 export type AggregatorId =
   | "oneinch"
   | "zerox"
+  | "0x"
+  | "velora"
   | "paraswap"
   | "openocean"
   | "jupiter"
