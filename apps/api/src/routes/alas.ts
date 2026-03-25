@@ -8,9 +8,8 @@ import crypto from "crypto";
 
 const { Pool } = pg;
 
-const DB_URL =
-  process.env["POSTGRES_URL"] ??
-  "postgresql://mariposa:mariposa2025@127.0.0.1:5432/mariposa";
+const DB_URL = process.env["POSTGRES_URL"];
+if (!DB_URL) throw new Error("POSTGRES_URL environment variable is required");
 
 let _pool: pg.Pool | null = null;
 
