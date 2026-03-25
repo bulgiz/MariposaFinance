@@ -9,6 +9,7 @@ import { ProtocolFilter } from "@/components/protocol-filter";
 import { SearchBar } from "@/components/search-bar";
 import { SortControls } from "@/components/sort-controls";
 import { PoolList } from "@/components/pool-list";
+import { ReadOnlyBanner } from "@/components/read-only-banner";
 
 export default function JardinesPage() {
   return (
@@ -19,6 +20,8 @@ export default function JardinesPage() {
           Explore yield farming opportunities across chains
         </p>
       </div>
+
+      <ReadOnlyBanner />
 
       <div className="space-y-6">
         <StatsBar />

@@ -730,3 +730,15 @@
   .marketing-page .m-footer { padding: 36px 16px; }
   .m-footer-links { gap: 16px; }
 }
+/* Launch App button in marketing nav */
+.m-btn-launch {
+  display: inline-flex; align-items: center;
+  padding: 7px 18px; border-radius: 8px;
+  background: var(--m-purple); color: #fff;
+  font-size: 0.82rem; font-weight: 600;
+  text-decoration: none; letter-spacing: 0.03em;
+  border: 1px solid rgba(192,132,252,0.5);
+  transition: background 0.2s, transform 0.15s;
+  white-space: nowrap;
+}
+.m-btn-launch:hover { background: #6b21a8; transform: translateY(-1px); color: #fff; }

@@ -10,3 +10,5 @@ coverage/
 .vercel
 out/
 cache/
+ecosystem.config.js.local
+logs/

@@ -217,8 +217,8 @@ export interface SwapQuoteParams {
 }
 
 export interface SwapQuoteResponse {
-  fromToken: TokenInfo;
-  toToken: TokenInfo;
+  fromToken?: TokenInfo;
+  toToken?: TokenInfo;
   fromAmount: string;
   toAmount: string;
   /** Transaction data ready to send */

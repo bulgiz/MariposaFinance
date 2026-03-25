@@ -23,12 +23,10 @@ const CHAIN_OPTIONS: { id: EvmChainId; name: string }[] = [
   { id: 137, name: "Polygon" },
   { id: 56, name: "BNB" },
   { id: 43114, name: "Avalanche" },
-  { id: 250, name: "Fantom" },
-  { id: 324, name: "zkSync" },
 ];
 
 export function SwapWidget() {
-  const { address, chainId, isConnected } = useAccount();
+  const { address, isConnected } = useAccount();
   const {
     quote,
     fetchQuote,
@@ -38,6 +36,7 @@ export function SwapWidget() {
     isConfirming,
     isSuccess,
     error,
+    walletChainId,
   } = useSwap();
 
   const [fromToken, setFromToken] = useState<TokenInfo | null>(null);
@@ -94,7 +93,7 @@ export function SwapWidget() {
 
   // Fetch quote when inputs change (debounced)
   useEffect(() => {
-    if (!fromToken || !toToken || !amount || !address || !chainId) return;
+    if (!fromToken || !toToken || !amount) return;
 
     const parsed = parseFloat(amount);
     if (isNaN(parsed) || parsed <= 0) return;
@@ -108,6 +107,7 @@ export function SwapWidget() {
           dst: toToken.address,
           amount: amountWei,
           slippage,
+          chainId: selectedChain,
         });
       } finally {
         setIsQuoting(false);
@@ -115,7 +115,7 @@ export function SwapWidget() {
     }, 500);
 
     return () => clearTimeout(timeout);
-  }, [fromToken, toToken, amount, slippage, address, chainId, fetchQuote]);
+  }, [fromToken, toToken, amount, slippage, selectedChain, fetchQuote]);
 
   const handleFlip = useCallback(() => {
     const prevFrom = fromToken;
@@ -134,11 +134,17 @@ export function SwapWidget() {
 
   const formattedToAmount = useMemo(() => {
     if (!quote || !toToken) return "";
-    return formatUnits(BigInt(quote.toAmount), toToken.decimals);
+    try {
+      const amt = quote.toAmount;
+      if (!amt) return "";
+      return formatUnits(BigInt(amt), toToken.decimals);
+    } catch { return ""; }
   }, [quote, toToken]);
 
+  const isWrongChain = isConnected && walletChainId !== undefined && walletChainId !== selectedChain;
   const canSwap =
     isConnected &&
+    !isWrongChain &&
     fromToken &&
     toToken &&
     amount &&
@@ -317,6 +323,8 @@ export function SwapWidget() {
                 ? "Waiting for wallet..."
                 : isConfirming
                 ? "Confirming..."
+                : isWrongChain
+                ? `Switch to ${CHAIN_OPTIONS.find(c => c.id === selectedChain)?.name ?? "correct"} network`
                 : !fromToken || !toToken
                 ? "Select tokens"
                 : !amount

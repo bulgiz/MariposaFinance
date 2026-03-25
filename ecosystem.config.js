@@ -1,9 +1,11 @@
+// ecosystem.config.js — PM2 process config
+// Copy this file and fill in your own values, or set env vars before running pm2.
+// NEVER commit real API keys or passwords to this file.
 module.exports = {
   apps: [
     {
       name: 'mariposa-web',
       cwd: '/var/www/mariposa/apps/web',
-      // next start — confirmed from apps/web/package.json "start": "next start"
       script: 'node_modules/.bin/next',
       args: 'start',
       instances: 1,
@@ -25,7 +27,6 @@ module.exports = {
     {
       name: 'mariposa-api',
       cwd: '/var/www/mariposa/apps/api',
-      // node dist/index.js — confirmed from apps/api/package.json "main": "./dist/index.js"
       script: 'node',
       args: 'dist/index.js',
       instances: 1,
@@ -34,10 +35,13 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3001,
         HOST: '127.0.0.1',
-        REDIS_URL: "redis://127.0.0.1:6379",
+        // Set these via .env or environment before starting PM2:
+        // REDIS_URL: "redis://127.0.0.1:6379",
         // POSTGRES_URL: "postgresql://user:pass@localhost:5432/mariposa",
-        BASE_RPC_URL: "https://base.llamarpc.com",
-        ARBITRUM_RPC_URL: "https://arb1.arbitrum.io/rpc",
+        // BASE_RPC_URL: "https://base.llamarpc.com",
+        // ARBITRUM_RPC_URL: "https://arb1.arbitrum.io/rpc",
+        // ZEROX_API_KEY: "",
+        // SWAP_FEE_RECIPIENT: "",
       },
       max_memory_restart: '800M',
       max_restarts: 10,

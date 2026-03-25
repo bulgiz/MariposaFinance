@@ -9,6 +9,7 @@ import { usePortfolio } from "@/hooks/use-pools";
 import { PositionCard } from "@/components/position-card";
 import { formatUsd } from "@mariposa/core";
 import { Skeleton } from "@mariposa/ui";
+import { ReadOnlyBanner } from "@/components/read-only-banner";
 
 export default function PortfolioPage() {
   const { isConnected, address } = useAccount();
@@ -22,6 +23,8 @@ export default function PortfolioPage() {
           View your positions across all chains
         </p>
       </div>
+
+      <ReadOnlyBanner />
 
       {!isConnected ? (
         <div className="rounded-xl border border-border bg-card p-12 text-center">

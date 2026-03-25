@@ -7,23 +7,22 @@ import { useState, useCallback } from "react";
 import {
   useAccount,
   useSendTransaction,
-  useReadContract,
   useWriteContract,
 } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
-import { maxUint256, parseUnits } from "viem";
+import { maxUint256 } from "viem";
 import { config } from "@/lib/wagmi";
 import { fetchSwapQuote } from "@/lib/api";
 import { erc20Abi } from "@mariposa/chain-adapters";
 import type { SwapQuoteResponse } from "@mariposa/core";
 
-/** Native token address placeholder used by 1inch */
+/** Native token address placeholder */
 const NATIVE_TOKEN = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
 type SwapStatus = "idle" | "pending" | "confirming" | "success" | "failed";
 
 export function useSwap() {
-  const { address, chainId } = useAccount();
+  const { address, chainId: walletChainId } = useAccount();
   const { sendTransactionAsync } = useSendTransaction();
   const { writeContractAsync } = useWriteContract();
 
@@ -36,7 +35,10 @@ export function useSwap() {
   const isSuccess = status === "success";
 
   /**
-   * Fetch a swap quote from the API proxy.
+   * Fetch a swap quote. Uses `chainId` param (the UI-selected chain) so
+   * quotes work even before the wallet is connected or before chain-switch.
+   * `from` falls back to a zero address if wallet not connected — 0x/Velora
+   * accept any valid address for price quotes.
    */
   const fetchQuote = useCallback(
     async (params: {
@@ -44,21 +46,19 @@ export function useSwap() {
       dst: string;
       amount: string;
       slippage: number;
+      chainId: number;
     }) => {
-      if (!address || !chainId) {
-        setError("Wallet not connected");
-        return null;
-      }
-
       setError(null);
       try {
+        // vitalik.eth — checksummed, accepted by 0x (>0xffff) and Velora for price preview
+        const from = address ?? "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
         const result = await fetchSwapQuote({
           src: params.src,
           dst: params.dst,
           amount: params.amount,
-          from: address,
+          from,
           slippage: params.slippage,
-          chainId,
+          chainId: params.chainId,
         });
         setQuote(result.data);
         return result.data;
@@ -69,28 +69,23 @@ export function useSwap() {
         return null;
       }
     },
-    [address, chainId]
+    [address]
   );
 
   /**
-   * Check if an ERC20 approval is needed for the swap and approve if so.
+   * Check if an ERC20 approval is needed and approve if so.
    */
   const ensureApproval = useCallback(
-    async (tokenAddress: string, spender: string, amount: bigint) => {
-      if (!address) return;
-
-      // Native tokens don't need approval
+    async (tokenAddress: string, spender: string) => {
+      if (!address || !walletChainId) return;
       if (tokenAddress.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return;
 
-      // Read current allowance using a direct viem call
-      // (We can't use useReadContract here since it's inside a callback,
-      //  so we use writeContractAsync for the approve step only)
       const approveTx = await writeContractAsync({
         address: tokenAddress as `0x${string}`,
         abi: erc20Abi,
         functionName: "approve",
         args: [spender as `0x${string}`, maxUint256],
-        chainId: chainId as 8453 | 42161,
+        chainId: walletChainId as 8453 | 42161,
       });
 
       await waitForTransactionReceipt(config, {
@@ -98,11 +93,11 @@ export function useSwap() {
         confirmations: 1,
       });
     },
-    [address, chainId, writeContractAsync]
+    [address, walletChainId, writeContractAsync]
   );
 
   /**
-   * Execute the swap transaction using the current quote.
+   * Execute the swap. Requires wallet connected and on the same chain as the quote.
    */
   const executeSwap = useCallback(async () => {
     if (!quote || !address) {
@@ -114,24 +109,17 @@ export function useSwap() {
     setStatus("pending");
 
     try {
-      // Step 1: Approve ERC20 if non-native token
-      const srcAddress = quote.fromToken.address;
-      if (srcAddress.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
-        await ensureApproval(
-          srcAddress,
-          quote.tx.to,
-          BigInt(quote.fromAmount)
-        );
+      const srcAddress = quote.fromToken?.address;
+      if (srcAddress && srcAddress.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
+        await ensureApproval(srcAddress, quote.tx.to);
       }
 
-      // Step 2: Send the swap transaction
       setStatus("confirming");
       const txHash = await sendTransactionAsync({
         to: quote.tx.to as `0x${string}`,
         data: quote.tx.data as `0x${string}`,
         value: BigInt(quote.tx.value),
         gas: BigInt(quote.tx.gas),
-        chainId: chainId as 8453 | 42161,
       });
 
       await waitForTransactionReceipt(config, {
@@ -146,7 +134,7 @@ export function useSwap() {
         err instanceof Error ? err.message : "Swap transaction failed";
       setError(message);
     }
-  }, [quote, address, chainId, sendTransactionAsync, ensureApproval]);
+  }, [quote, address, sendTransactionAsync, ensureApproval]);
 
   const reset = useCallback(() => {
     setQuote(null);
@@ -164,5 +152,6 @@ export function useSwap() {
     isSuccess,
     status,
     error,
+    walletChainId,
   };
 }

@@ -7,6 +7,9 @@ import { ConditionalShell } from "@/components/conditional-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  other: {
+    "talentapp:project_verification": "261ac89e8b1cea89c594f41bedfe84e749e2f4dd7e67029a56db0119ed2a9b048644efcd5e4086db54c32a5202073483a72eb024689e23073d6fc54a0dd5b707",
+  },
   title:
     "Mariposa Finance — Multi-Chain DeFi Yield Aggregator | Auto-Compounding Vaults",
   description:

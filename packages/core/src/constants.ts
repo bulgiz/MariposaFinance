@@ -26,8 +26,9 @@ export const SWAP_TOKEN_CACHE_TTL = 3600;
 export const SWAP_PRICE_CACHE_TTL = 30;
 
 /** EVM chains that support swap aggregation */
+// Chains supported by at least one aggregator (0x or Velora/ParaSwap)
 export const SUPPORTED_SWAP_CHAINS = [
-  1, 10, 56, 137, 250, 324, 8453, 42161, 43114,
+  1, 10, 56, 137, 8453, 42161, 43114,
 ] as const;
 
 /** EVM chain display names */

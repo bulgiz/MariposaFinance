@@ -7,6 +7,7 @@ import rateLimit from "@fastify/rate-limit";
 import { PoolService } from "./pool-service.js";
 import { registerPoolRoutes } from "./routes/pools.js";
 import { registerSwapRoutes } from "./routes/swap.js";
+import { registerAlasRoutes } from "./routes/alas.js";
 
 const PORT = Number(process.env["API_PORT"] ?? 3001);
 const HOST = process.env["API_HOST"] ?? "0.0.0.0";
@@ -29,7 +30,7 @@ async function main() {
       "https://mariposa.finance",
       /^http:\/\/192\.168\.\d+\.\d+/,
     ],
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "OPTIONS"],
   });
 
   // Rate limiting
@@ -47,6 +48,9 @@ async function main() {
 
   // Swap routes (1inch proxy)
   registerSwapRoutes(app);
+
+  // Alas points system
+  registerAlasRoutes(app);
 
   // Start server
   try {

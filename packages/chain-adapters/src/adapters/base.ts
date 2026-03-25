@@ -47,15 +47,24 @@ const AAVE_BASE_TOKENS = [
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyPublicClient = ReturnType<typeof createPublicClient<any, any>>;
 
+// Public Base RPCs in order of preference
+const BASE_RPC_FALLBACKS = [
+  "https://base.llamarpc.com",
+  "https://base-rpc.publicnode.com",
+  "https://base.drpc.org",
+  "https://mainnet.base.org",
+];
+
 export class BaseAdapter implements ChainAdapter {
   readonly chainId = 8453 as const;
   readonly chainName = "Base";
   private client: AnyPublicClient;
 
   constructor(rpcUrl?: string) {
+    const url = rpcUrl ?? process.env["BASE_RPC_URL"] ?? BASE_RPC_FALLBACKS[0];
     this.client = createPublicClient({
       chain: base,
-      transport: http(rpcUrl ?? process.env["BASE_RPC_URL"] ?? undefined),
+      transport: http(url),
     });
   }
 

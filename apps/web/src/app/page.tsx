@@ -127,10 +127,11 @@ export default function MarketingPage() {
             <a href="#chains" className="hide-mobile">Chains</a>
             <a href="#tokenomics" className="hide-mobile">$CAPULLO</a>
             <a href="#roadmap">Roadmap</a>
-            <div className="m-badge-cs">
-              <span className="m-dot" />
-              Wallet Coming Soon
-            </div>
+            <a href="/jardines" className="hide-mobile">Jardines</a>
+            <a href="/alas" className="hide-mobile">Alas ✨</a>
+            <a href="/jardines" className="m-btn-launch">
+              Launch App
+            </a>
           </div>
         </nav>
 
@@ -151,10 +152,10 @@ export default function MarketingPage() {
             </p>
             <p className="m-hero-motto">From cocoon to butterfly.</p>
             <div className="m-hero-actions">
-              <a href="#features" className="m-btn-primary">
-                Explore What&apos;s Coming
+              <a href="/jardines" className="m-btn-primary">
+                Launch App
               </a>
-              <a href="#alas" className="m-btn-secondary">
+              <a href="/alas" className="m-btn-secondary">
                 Earn Alas Points
               </a>
             </div>
@@ -489,8 +490,8 @@ export default function MarketingPage() {
                 <span>🐛</span> Bug reports
               </div>
             </div>
-            <a href="#" className="m-btn-gold">
-              Join Discord &amp; Start Earning
+            <a href="/alas" className="m-btn-gold">
+              Start Earning Alas
             </a>
           </div>
         </div>

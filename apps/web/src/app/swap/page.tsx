@@ -3,8 +3,45 @@
 
 "use client";
 
+import { Component, type ReactNode } from "react";
 import { SwapWidget } from "@/components/swap/swap-widget";
 import { ENABLE_SWAP } from "@/config/features";
+
+class SwapErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: "" };
+  }
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      hasError: true,
+      message: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="mx-auto max-w-md rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center">
+          <div className="text-3xl mb-3">⚠️</div>
+          <h2 className="font-semibold mb-1">Swap widget failed to load</h2>
+          <p className="text-sm text-muted-foreground mb-4">{this.state.message}</p>
+          <button
+            className="text-sm text-primary underline"
+            onClick={() => this.setState({ hasError: false, message: "" })}
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function SwapPage() {
   if (!ENABLE_SWAP) {
@@ -29,7 +66,9 @@ export default function SwapPage() {
           you — just 0.15% fee.
         </p>
       </div>
-      <SwapWidget />
+      <SwapErrorBoundary>
+        <SwapWidget />
+      </SwapErrorBoundary>
     </div>
   );
 }
