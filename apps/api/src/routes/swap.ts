@@ -50,6 +50,7 @@ const quoteQuerySchema = z.object({
   amount:   z.string().regex(/^\d+$/, "Amount must be wei string"),
   from:     z.string().regex(/^0x[a-fA-F0-9]{40}$/, "Invalid wallet address"),
   slippage: z.coerce.number().min(0).max(50).default(2),
+  aggregator: z.enum(["0x", "velora", "auto"]).optional().default("auto"),
   chainId:  chainIdSchema,
 });
 
@@ -292,8 +293,12 @@ export function registerSwapRoutes(app: FastifyInstance) {
     catch (err) { return reply.status(400).send({ error: "Invalid parameters", details: err }); }
 
     const slippageBps = Math.round(query.slippage * 100);
-    const use0x    = !!ZEROX_API_KEY && !ZEROX_UNSUPPORTED.has(query.chainId);
-    const useVelora = !!VELORA_NETWORK[query.chainId];  // only supported chains
+    const canUse0x    = !!ZEROX_API_KEY && !ZEROX_UNSUPPORTED.has(query.chainId);
+    const canUseVelora = !!VELORA_NETWORK[query.chainId];
+    // If user prefers a specific aggregator, restrict to that one (if available)
+    const pref = query.aggregator ?? "auto";
+    const use0x    = pref === "auto" ? canUse0x    : pref === "0x"     && canUse0x;
+    const useVelora = pref === "auto" ? canUseVelora : pref === "velora" && canUseVelora;
     const use1inch = !!ONEINCH_API_KEY;
 
     if (!use0x && !useVelora && !use1inch) {

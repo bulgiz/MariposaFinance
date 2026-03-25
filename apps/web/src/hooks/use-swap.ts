@@ -48,6 +48,7 @@ export function useSwap() {
       amount: string;
       slippage: number;
       chainId: number;
+      aggregator?: '0x' | 'velora' | 'auto';
     }) => {
       setError(null);
       try {
@@ -60,6 +61,7 @@ export function useSwap() {
           from,
           slippage: params.slippage,
           chainId: params.chainId,
+          aggregator: params.aggregator,
         });
         setQuote(result.data);
         setAllQuotes(result.data.allQuotes);

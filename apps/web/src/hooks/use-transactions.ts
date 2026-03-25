@@ -8,6 +8,7 @@ import {
   useReadContract,
   useWriteContract,
   useAccount,
+  useBalance,
 } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
 import { parseUnits, maxUint256 } from "viem";
@@ -24,22 +25,42 @@ import {
 
 // ─── Token Balance Hook ─────────────────────────────────────────
 
+const NATIVE_TOKEN = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
+/** Returns the balance of an ERC20 or native token, normalised to a bigint. */
 export function useTokenBalance(
   tokenAddress: string | undefined,
   userAddress: string | undefined,
   chainId?: number
 ) {
-  return useReadContract({
+  const isNative = tokenAddress?.toLowerCase() === NATIVE_TOKEN;
+
+  // Always call both hooks — React requires unconditional hook calls.
+  const nativeResult = useBalance({
+    address: userAddress as `0x${string}`,
+    chainId: chainId as 1 | 10 | 56 | 137 | 8453 | 42161 | 43114 | undefined,
+    query: {
+      enabled: !!userAddress && isNative === true,
+      refetchInterval: 15_000,
+    },
+  });
+
+  const erc20Result = useReadContract({
     address: tokenAddress as `0x${string}`,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [userAddress as `0x${string}`],
     chainId: chainId as 1 | 10 | 56 | 137 | 8453 | 42161 | 43114 | undefined,
     query: {
-      enabled: !!tokenAddress && !!userAddress,
+      enabled: !!tokenAddress && !!userAddress && isNative === false,
       refetchInterval: 15_000,
     },
   });
+
+  if (isNative) {
+    return { ...nativeResult, data: nativeResult.data?.value };
+  }
+  return erc20Result;
 }
 
 // ─── Token Allowance Hook ───────────────────────────────────────

@@ -49,15 +49,18 @@ export async function fetchSwapQuote(params: {
   from: string;
   slippage: number;
   chainId: number;
+  aggregator?: '0x' | 'velora' | 'auto';
 }): Promise<{ data: SwapQuoteResponse }> {
-  const qs = new URLSearchParams({
+  const qp: Record<string, string> = {
     src: params.src,
     dst: params.dst,
     amount: params.amount,
     from: params.from,
     slippage: String(params.slippage),
     chainId: String(params.chainId),
-  }).toString();
+  };
+  if (params.aggregator) qp['aggregator'] = params.aggregator;
+  const qs = new URLSearchParams(qp).toString();
   return fetchApi<{ data: SwapQuoteResponse }>(`/swap/quote?${qs}`);
 }
 

@@ -25,6 +25,12 @@ const CHAIN_OPTIONS: { id: EvmChainId; name: string }[] = [
   { id: 43114, name: "Avalanche" },
 ];
 
+const AGG_LABELS: Record<string, string> = {
+  "0x": "0x Protocol",
+  velora: "Velora / ParaSwap",
+  "1inch": "1inch",
+};
+
 export function SwapWidget() {
   const { address, isConnected } = useAccount();
   const {
@@ -43,13 +49,16 @@ export function SwapWidget() {
   const [fromToken, setFromToken] = useState<TokenInfo | null>(null);
   const [toToken, setToToken] = useState<TokenInfo | null>(null);
   const [amount, setAmount] = useState("");
+  const [toAmount, setToAmount] = useState("");          // editable "you receive"
+  const [quoteDirection, setQuoteDirection] = useState<"from" | "to">("from");
   const [slippage, setSlippage] = useState(2);
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [selectedChain, setSelectedChain] = useState<EvmChainId>(8453);
   const [isLoadingTokens, setIsLoadingTokens] = useState(false);
   const [isQuoting, setIsQuoting] = useState(false);
+  const [preferredAggregator, setPreferredAggregator] = useState<"0x" | "velora" | "auto">("auto");
 
-  // Fetch token balance for "from" token (use selectedChain so it works before wallet switch)
+  // Fetch token balance for "from" token (native-aware, chain-aware)
   const { data: fromBalance } = useTokenBalance(
     fromToken?.address,
     address,
@@ -66,7 +75,6 @@ export function SwapWidget() {
         const result = await fetchSwapTokens(selectedChain);
         if (cancelled) return;
 
-        // 1inch returns tokens as { tokens: { [address]: TokenInfo } }
         const tokenData = result.data as { tokens?: Record<string, TokenInfo> };
         if (tokenData?.tokens) {
           const tokenList = Object.values(tokenData.tokens);
@@ -80,9 +88,7 @@ export function SwapWidget() {
     }
 
     loadTokens();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [selectedChain]);
 
   // Reset selections when chain changes
@@ -90,58 +96,115 @@ export function SwapWidget() {
     setFromToken(null);
     setToToken(null);
     setAmount("");
+    setToAmount("");
+    setQuoteDirection("from");
     reset();
   }, [selectedChain, reset]);
 
   // Fetch quote when inputs change (debounced)
   useEffect(() => {
-    if (!fromToken || !toToken || !amount) return;
+    if (!fromToken || !toToken) return;
 
-    const parsed = parseFloat(amount);
-    if (isNaN(parsed) || parsed <= 0) return;
+    // Decide which direction to quote based on which field the user last edited
+    if (quoteDirection === "from") {
+      if (!amount) return;
+      const parsed = parseFloat(amount);
+      if (isNaN(parsed) || parsed <= 0) return;
+    } else {
+      if (!toAmount) return;
+      const parsed = parseFloat(toAmount);
+      if (isNaN(parsed) || parsed <= 0) return;
+    }
 
     const timeout = setTimeout(async () => {
       setIsQuoting(true);
       try {
-        const amountWei = parseUnits(amount, fromToken.decimals).toString();
-        await fetchQuote({
+        let amountWei: string;
+        if (quoteDirection === "from") {
+          amountWei = parseUnits(amount, fromToken.decimals).toString();
+        } else {
+          // Reverse quote: we know the output, back-calculate input via a direct
+          // "sell enough to get X" — swap src/dst and use toAmount as the sell amount,
+          // then use the returned exchange rate to set the fromAmount
+          // For now: estimate from amount = toAmount / exchangeRate (if quote exists)
+          // then re-quote with that estimated from amount
+          const toAmtWei = parseUnits(toAmount, toToken.decimals);
+          // Estimate sell amount using last known rate or 1:1 if no quote yet
+          const rate = quote
+            ? parseFloat(quote.exchangeRate)
+            : 1;
+          const estimatedFrom = rate > 0
+            ? (parseFloat(toAmount) / rate).toFixed(fromToken.decimals)
+            : toAmount;
+          amountWei = parseUnits(estimatedFrom, fromToken.decimals).toString();
+          void toAmtWei; // used for estimation above
+        }
+
+        const result = await fetchQuote({
           src: fromToken.address,
           dst: toToken.address,
           amount: amountWei,
           slippage,
           chainId: selectedChain,
+          aggregator: preferredAggregator,
         });
+
+        // Sync the other field from the returned quote
+        if (result) {
+          const receivedAmt = formatUnits(BigInt(result.toAmount), toToken.decimals);
+          const sentAmt = formatUnits(BigInt(result.fromAmount), fromToken.decimals);
+          if (quoteDirection === "from") {
+            setToAmount(parseFloat(receivedAmt).toFixed(6));
+          } else {
+            setAmount(parseFloat(sentAmt).toFixed(6));
+          }
+        }
       } finally {
         setIsQuoting(false);
       }
-    }, 500);
+    }, 600);
 
     return () => clearTimeout(timeout);
-  }, [fromToken, toToken, amount, slippage, selectedChain, fetchQuote]);
+  }, [fromToken, toToken, amount, toAmount, quoteDirection, slippage, selectedChain, preferredAggregator, fetchQuote, quote]);
 
   const handleFlip = useCallback(() => {
     const prevFrom = fromToken;
     const prevTo = toToken;
     setFromToken(prevTo);
     setToToken(prevFrom);
-    setAmount("");
+    setAmount(toAmount);
+    setToAmount(amount);
+    setQuoteDirection("from");
     reset();
-  }, [fromToken, toToken, reset]);
+  }, [fromToken, toToken, amount, toAmount, reset]);
 
   const handleMaxClick = useCallback(() => {
     if (!fromBalance || !fromToken) return;
     const formatted = formatUnits(fromBalance as bigint, fromToken.decimals);
     setAmount(formatted);
+    setQuoteDirection("from");
   }, [fromBalance, fromToken]);
 
-  const formattedToAmount = useMemo(() => {
-    if (!quote || !toToken) return "";
-    try {
-      const amt = quote.toAmount;
-      if (!amt) return "";
-      return formatUnits(BigInt(amt), toToken.decimals);
-    } catch { return ""; }
-  }, [quote, toToken]);
+  const handleFromAmountChange = useCallback((val: string) => {
+    setAmount(val);
+    setQuoteDirection("from");
+    if (!val) setToAmount("");
+  }, []);
+
+  const handleToAmountChange = useCallback((val: string) => {
+    setToAmount(val);
+    setQuoteDirection("to");
+    if (!val) setAmount("");
+  }, []);
+
+  // Fee breakdown
+  const feeBreakdown = useMemo(() => {
+    if (!quote || !fromToken) return null;
+    const feePct = 0.15;
+    const sellAmt = parseFloat(formatUnits(BigInt(quote.fromAmount), fromToken.decimals));
+    const feeAmt = sellAmt * (feePct / 100);
+    return { pct: feePct, tokenAmt: feeAmt.toFixed(6), symbol: fromToken.symbol };
+  }, [quote, fromToken]);
 
   const isWrongChain = isConnected && walletChainId !== undefined && walletChainId !== selectedChain;
   const canSwap =
@@ -181,7 +244,7 @@ export function SwapWidget() {
         <div className="rounded-xl bg-secondary p-4 mb-2">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs text-muted-foreground">You pay</span>
-            {fromBalance && fromToken && (
+            {fromBalance !== undefined && fromToken && (
               <button
                 onClick={handleMaxClick}
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -199,7 +262,7 @@ export function SwapWidget() {
               type="number"
               placeholder="0.0"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => handleFromAmountChange(e.target.value)}
               className="border-0 bg-transparent text-2xl font-semibold p-0 h-auto focus-visible:ring-0"
               min={0}
               step="any"
@@ -236,23 +299,29 @@ export function SwapWidget() {
           </button>
         </div>
 
-        {/* To Token */}
+        {/* To Token — editable */}
         <div className="rounded-xl bg-secondary p-4 mt-2">
-          <div className="mb-2">
+          <div className="flex items-center justify-between mb-2">
             <span className="text-xs text-muted-foreground">You receive</span>
+            {quoteDirection === "to" && isQuoting && (
+              <span className="text-xs text-muted-foreground animate-pulse">calculating...</span>
+            )}
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex-1 text-2xl font-semibold text-foreground/80 min-h-[2.5rem] flex items-center">
-              {isQuoting ? (
-                <span className="text-muted-foreground animate-pulse">
-                  Fetching quote...
-                </span>
-              ) : formattedToAmount ? (
-                parseFloat(formattedToAmount).toFixed(6)
-              ) : (
-                <span className="text-muted-foreground">0.0</span>
-              )}
-            </div>
+            <Input
+              type="number"
+              placeholder="0.0"
+              value={isQuoting && quoteDirection === "from" ? "" : toAmount}
+              onChange={(e) => handleToAmountChange(e.target.value)}
+              className="border-0 bg-transparent text-2xl font-semibold p-0 h-auto focus-visible:ring-0"
+              min={0}
+              step="any"
+            />
+            {isQuoting && quoteDirection === "from" && (
+              <span className="absolute text-2xl font-semibold text-muted-foreground animate-pulse pointer-events-none">
+                ...
+              </span>
+            )}
             <TokenSelector
               tokens={tokens}
               selectedToken={toToken}
@@ -260,6 +329,9 @@ export function SwapWidget() {
               label="Select"
             />
           </div>
+          <p className="text-xs text-muted-foreground mt-1 opacity-60">
+            Enter an amount to receive and we&apos;ll calculate what you need to pay
+          </p>
         </div>
 
         {/* Quote Details */}
@@ -292,10 +364,82 @@ export function SwapWidget() {
               <span>Est. Gas</span>
               <span>{quote.estimatedGas.toLocaleString()} gas</span>
             </div>
+            {feeBreakdown && (
+              <div className="flex justify-between text-muted-foreground">
+                <span>Mariposa Fee (0.15%)</span>
+                <span>{feeBreakdown.tokenAmt} {feeBreakdown.symbol}</span>
+              </div>
+            )}
             <div className="flex justify-between text-muted-foreground">
-              <span>Mariposa Fee</span>
-              <span>0.15%</span>
+              <span>Slippage</span>
+              <span>{slippage}%</span>
             </div>
+          </div>
+        )}
+
+        {/* Aggregator Comparison — clickable to select */}
+        {allQuotes && allQuotes.length > 0 && (
+          <div className="mt-4 rounded-xl border border-border p-3 space-y-1.5">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-muted-foreground">Route Comparison</p>
+              {preferredAggregator !== "auto" && (
+                <button
+                  onClick={() => setPreferredAggregator("auto")}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Use best
+                </button>
+              )}
+            </div>
+            {allQuotes.map((q, i) => {
+              const isBest = q.success && i === allQuotes.findIndex(x => x.success);
+              const isSelected = preferredAggregator === q.aggregator;
+              const label = AGG_LABELS[q.aggregator] ?? q.aggregator;
+              return (
+                <button
+                  key={i}
+                  onClick={() => {
+                    if (q.success) {
+                      setPreferredAggregator(q.aggregator as "0x" | "velora");
+                    }
+                  }}
+                  disabled={!q.success}
+                  className={[
+                    "w-full flex items-center justify-between text-xs rounded-lg px-3 py-2 transition-colors",
+                    q.success ? "cursor-pointer hover:bg-secondary" : "opacity-40 cursor-not-allowed",
+                    isSelected ? "bg-primary/10 border border-primary/30" : "",
+                  ].join(" ")}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-foreground/80">{label}</span>
+                    {isBest && preferredAggregator === "auto" && (
+                      <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded">
+                        best
+                      </span>
+                    )}
+                    {isSelected && preferredAggregator !== "auto" && (
+                      <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded">
+                        selected
+                      </span>
+                    )}
+                    {q.success && q.sources && q.sources.length > 0 && (
+                      <span className="text-muted-foreground/50">{q.sources.slice(0, 2).join(", ")}</span>
+                    )}
+                  </div>
+                  {q.success && q.buyAmount && toToken ? (
+                    <span className="font-mono text-foreground/70">
+                      {parseFloat(
+                        (Number(q.buyAmount) / Math.pow(10, toToken.decimals)).toFixed(6)
+                      ).toString()}{" "}{toToken.symbol}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground/40 text-[11px]">
+                      {q.error ? "failed" : "unavailable"}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -311,6 +455,7 @@ export function SwapWidget() {
               onClick={() => {
                 reset();
                 setAmount("");
+                setToAmount("");
               }}
             >
               Swap Again
@@ -350,28 +495,6 @@ export function SwapWidget() {
         {error && (
           <div className="mt-3 rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-center text-sm text-red-400">
             {error}
-          </div>
-        )}
-
-        {/* Aggregator Comparison */}
-        {allQuotes && allQuotes.length > 0 && (
-          <div className="mt-4 rounded-xl border border-border p-3 space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground mb-2">Quote Comparison</p>
-            {allQuotes.map((q, i) => (
-              <div key={i} className="flex items-center justify-between text-xs">
-                <span className="capitalize font-medium text-foreground/70">{q.aggregator}</span>
-                {q.success && q.buyAmount && toToken ? (
-                  <span className="text-green-400 font-mono">
-                    {parseFloat(
-                      (Number(q.buyAmount) / Math.pow(10, toToken.decimals)).toFixed(6)
-                    ).toString()}{" "}{toToken.symbol}
-                    {i === 0 && <span className="ml-1 text-[10px] bg-green-500/20 text-green-400 px-1 rounded">best</span>}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground/50">unavailable</span>
-                )}
-              </div>
-            ))}
           </div>
         )}
 
