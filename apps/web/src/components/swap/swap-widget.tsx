@@ -59,6 +59,8 @@ export function SwapWidget() {
   const [isQuoting, setIsQuoting] = useState(false);
   const [preferredAggregator, setPreferredAggregator] = useState<"0x" | "velora" | "auto">("auto");
   const [refreshCountdown, setRefreshCountdown] = useState<number | null>(null);
+  // Stable display quotes — only updated when auto-mode ran both aggregators
+  const [displayAllQuotes, setDisplayAllQuotes] = useState<typeof allQuotes>(undefined);
 
   // Refs so callbacks don't need stale deps
   const quoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -132,6 +134,10 @@ export function SwapWidget() {
       if (result) {
         const received = formatUnits(BigInt(result.toAmount), toTok.decimals);
         setToAmount(parseFloat(received).toFixed(6));
+        // Only update the comparison panel when auto mode ran (has quotes from both aggregators)
+        if (agg === "auto" && result.allQuotes && result.allQuotes.length > 1) {
+          setDisplayAllQuotes(result.allQuotes);
+        }
       }
     } finally {
       setIsQuoting(false);
@@ -406,7 +412,7 @@ export function SwapWidget() {
         )}
 
         {/* Aggregator Comparison — clickable */}
-        {allQuotes && allQuotes.length > 0 && (
+        {(displayAllQuotes ?? allQuotes) && (displayAllQuotes ?? allQuotes)!.length > 0 && (
           <div className="mt-4 rounded-xl border border-border p-3 space-y-1.5">
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-medium text-muted-foreground">Route Comparison</p>
@@ -416,8 +422,18 @@ export function SwapWidget() {
                 </button>
               )}
             </div>
-            {allQuotes.map((q, i) => {
-              const isBest = q.success && i === allQuotes.findIndex(x => x.success);
+            {(() => {
+              const quotes = displayAllQuotes ?? allQuotes ?? [];
+              type AggQuote = NonNullable<typeof displayAllQuotes>[number];
+              // Best = highest buyAmount among successful quotes
+              const bestAgg = quotes
+                .filter(q => q.success && q.buyAmount)
+                .reduce<AggQuote | null>(
+                  (b, q) => !b || BigInt(q.buyAmount!) > BigInt(b.buyAmount!) ? q : b,
+                  null
+                )?.aggregator ?? null;
+              return quotes.map((q, i) => {
+              const isBest = q.success && q.aggregator === bestAgg;
               const isSelected = preferredAggregator === q.aggregator;
               const label = AGG_LABELS[q.aggregator] ?? q.aggregator;
               return (
@@ -452,7 +468,7 @@ export function SwapWidget() {
                   )}
                 </button>
               );
-            })}
+            });})()}
           </div>
         )}
 
